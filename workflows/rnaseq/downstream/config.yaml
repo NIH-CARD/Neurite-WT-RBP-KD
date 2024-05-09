@@ -27,7 +27,7 @@ main:
   # If you are using Ensembl annotations with gene IDs like ENSG000001.1 (with
   # the trailing dotted version number), then these genes will not be found in
   # the OrgDb. Set this to TRUE to strip off the dotted version to fix this.
-  strip_dotted_version: FALSE
+  strip_dotted_version: TRUE
 
   # If you have technical replicates, you can automatically collapse them.
   # Provide a column in colData here, and for each unique value in the provided
@@ -48,7 +48,7 @@ main:
   # match. By default, this mismatch will stop with an error. If instead you
   # want to use only the intersection of genes found in all contrasts, set this
   # to TRUE.
-  force_intersect: TRUE
+  force_intersect: FALSE
 
   # AnnotationHub uses a safe permissions approach, setting the AnnotationHub
   # lock file to be only visible by the creating user and the cache database to
@@ -66,7 +66,7 @@ plotting:
   # For each item in this list, you will get a column of colors along the right
   # side in the clustered heatmap and a PCA plot tab.
   covariates_for_plots:
-    - guide_group_actual
+    - full_guide_grp
     - group
     - guide_group
 
@@ -205,8 +205,8 @@ functional_enrichment:
   ontologies:
     # Standard Gene Ontology
     "BP": "GO Biological Process"
-    #"CC": "GO Cellular Component"
-    #"MF": "GO Molecular Function"
+      #"CC": "GO Cellular Component"
+      #"MF": "GO Molecular Function"
 
     # KEGG pathway analysis
     #"KEGG": "KEGG Pathways"
@@ -236,5 +236,5 @@ functional_enrichment:
 
   # Any GO terms above these cutoffs will not be reported. Set to 1 if you're
   # fine getting plots even with no statistically significant terms.
-  pvalueCutoff: 1
+  pvalueCutoff: 0.1 # setting q values may be overly strict, we'll do 0.08 here to be very generous
   qvalueCutoff: 1
