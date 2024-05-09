@@ -15,7 +15,7 @@ stranded: 'fr-firststrand'     # for dUTP libraries
 #         'unstranded'         # for libraries without strand specificity
 
 aligner:
-  index: 'hisat2'
+  index: 'star-twopass'
   tag: 'gencode-v28'
 
 rrna:
