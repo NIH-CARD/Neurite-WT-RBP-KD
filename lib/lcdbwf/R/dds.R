@@ -46,7 +46,7 @@ kallisto.path.func <- function (x) file.path('..', 'data', 'rnaseq_samples', x, 
 #' @param featureCounts Location of featureCounts output to be loaded
 make_dds <- function(design_data, config=NULL, collapse_by=NULL,
                      strip_dotted_version=NULL,
-                     featureCounts='../data/rnaseq_aggregation/featurecounts.txt',
+                     featureCounts="../data/rnaseq_aggregation/featurecounts.txt",
                      salmon_pattern="../data/rnaseq_samples/__SAMPLENAME__/__SAMPLENAME__.salmon/quant.sf",
                      kallisto_pattern="../data/rnaseq_samples/__SAMPLENAME__/__SAMPLENAME__.kallisto/abundance.h5",
                      ...){
@@ -91,15 +91,16 @@ make_dds <- function(design_data, config=NULL, collapse_by=NULL,
     txdb <- get_annotation_db(config, dbtype="TxDb")
     k <- keys(txdb, keytype="TXNAME")
     tx2gene <- select(txdb, k, "GENEID", "TXNAME")
+    tx2gene <- na.omit(tx2gene)
   }
 
   if (salmon){
-      coldata$salmon.path <- sapply(coldata$samplename, function (x) gsub("__SAMPLENAME__", x, salmon_pattern))
+      coldata$salmon.path <- sapply(coldata$sample, function (x) gsub("__SAMPLENAME__", x, salmon_pattern))
       txi <- tximport::tximport(coldata[, 'salmon.path'], type='salmon', tx2gene=tx2gene, ignoreTxVersion=strip_dotted_version)
       dds <- DESeq2::DESeqDataSetFromTximport(txi, colData=coldata, design=design)
 
   } else if (kallisto) {
-      coldata$kallisto.path <- sapply(coldata$samplename, function (x) gsub("__SAMPLENAME__", x, kallisto_pattern))
+      coldata$kallisto.path <- sapply(coldata$sample, function (x) gsub("__SAMPLENAME__", x, kallisto_pattern))
       txi <- tximport::tximport(coldata[, 'kallisto.path'], type='kallisto', tx2gene=tx2gene, ignoreTxVersion=strip_dotted_version)
       dds <- DESeq2::DESeqDataSetFromTximport(txi, colData=coldata, design=design)
 
