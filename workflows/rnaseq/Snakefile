@@ -436,10 +436,10 @@ if config['aligner']['index'] == 'star-twopass':
             sjout=temporary(c.patterns['bam'].replace('.bam', '.star-pass2.SJ.out.tab')),
         log:
             c.patterns['bam'].replace('.bam', '.star-pass2.bam.log')
-        threads: 16
+        threads: 19
         resources:
-            mem_mb=gb(64),
-            runtime=autobump(hours=8)
+            mem_mb=gb(140),
+            runtime=autobump(hours=16)
         run:
             genomedir = os.path.dirname(input.index[0])
             outdir = os.path.dirname(output[0])
@@ -449,6 +449,10 @@ if config['aligner']['index'] == 'star-twopass':
                     # In contrast to pass 1, we will be keeping these BAMs --
                     # so sort them
                     '--outSAMtype BAM SortedByCoordinate '
+
+                    # Trying to fix the error Fatal LIMIT ERRORL the number of
+                    # junctions inserted on the fly =305377
+                    '--limitSjdbInsertNsj 50000000 '
 
                     # Splice junction databases from all samples in the first
                     # pass.
@@ -703,8 +707,8 @@ rule multiqc:
     log: c.targets['multiqc'][0] + '.log'
     threads: 1
     resources:
-        mem_mb=gb(2),
-        runtime=autobump(hours=2)
+        mem_mb=gb(8),
+        runtime=autobump(hours=6)
     run:
         analysis_directory = set([os.path.dirname(i) for i in input])
         outdir = os.path.dirname(c.targets['multiqc'][0])
