@@ -1,0 +1,237 @@
+---
+title: Differential expression analysis
+output:
+    html_document:
+        code_folding: hide
+        toc: true
+        toc_float: true
+        toc_depth: 3
+params:
+    contrast_name: ''
+    target: ''
+    targeting: ''
+    nontargeting: ''
+---
+
+```{r global_options, include=FALSE}
+# Sets up global options for rendering RMarkdown into HTML.
+system("export TMPDIR=/lscratch/$SLURM_JOB_ID")
+knitr::opts_chunk$set(
+    warning=FALSE,
+    message=FALSE,
+    cache.extra_file_dep_1 = file.info('../config/sampletable.tsv')$mtime,
+    cache.extra_file_dep_2 = file.info('../data/rnaseq_aggregation/featurecounts_features.txt')$mtime,
+    cache.extra_file_dep_3 = file.info('../data/rnaseq_samples/*/*.kallisto/abundance.h5')$mtime,
+    cache.extra_file_dep_4 = file.info('../data/rnaseq_samples/*/*.salmon/quant.sf')$mtime
+)
+```
+
+```{r lcdbwf, results='hide'}
+# Load the lcdbwf R package, which is stored locally.
+# This package has many custom functions used throughout this document.
+devtools::document('../../../lib/lcdbwf')
+devtools::load_all('../../../lib/lcdbwf')
+```
+
+
+```{r config}
+
+# HOW TO CONFIGURE ------------------------------------------------------
+# Any chunks below that depend on config options should be cached and use one
+# or more sections of the config object as arbitrary additional chunk options.
+# By convention, we use the argument name "config" although there is nothing
+# special about this name e.g.,
+#
+#      {r, cache=TRUE, config=config$annotation}
+#
+# Thereafter, any changes to config options under the "annotation" section will then
+# invalidate that chunk's cache -- along with any other chunks that also have
+# config$annotation included as a chunk option.
+#
+config <- lcdbwf:::load_config('config.yaml')
+
+# To keep this Rmd streamlined, much of the text is stored in a different file,
+# text.yaml, and accessed via the `text` list after it is loaded here.
+text <- yaml::yaml.load_file('text.yaml')
+
+# Initialixe ags 
+contrast_name <- params$contrast_name
+target <- params$target
+targeting_guide <- params$targeting
+nontargeting_guide <- params$nontargeting
+base_folder <- "transite_logfc_targeting_nontargeting_interaction_results/"
+```
+
+
+# Changelog
+
+**Initial results**
+
+Last run: `r date()`
+
+```{r coldata_setup}
+# Set up all of the metadata for the samples and experimental design. Use this
+# chunk to modify if needed.
+# https://bioconductor.org/packages/devel/bioc/vignettes/tximeta/inst/doc/tximeta.html
+# Normally don't recommend this but if we want everything to be consistent it is important to
+# use the same gtf files rather than having them downloaded automatically.
+colData <- read.table(config$main$sampletable, sep='\t', header=TRUE, stringsAsFactors=FALSE)
+
+# lcdb-wf requires that the first column of the sampletable contain sample
+# names. Use that to set the rownames.
+rownames(colData) <- colData[,1]
+
+```
+
+```{r dds_initial, cache=FALSE, config=c(config$main, config$toggle$salmon, config$toggle$kallisto)}
+# Convert featureCounts transcript-level counts into DESeq2 object, and run
+# variance-stabiliizing transform.
+# Will likely need to find a way to run salmon quant to combine the collapsable samples to 
+# do that like this:
+# salmon quant -i transcripts_index -l <LIBTYPE> \
+#  -1 reads01_1.fq  reads02_1.fq \
+#  -2 reads01_2.fq reads02_2.fq \
+#  -o sample
+# Will need to make a dataframe like this for the sampletable: https://support.bioconductor.org/p/9149213/
+# use fishpond 
+library(tximeta)
+library(data.table)
+
+dir <- '/data/CARD_ARDIS/2023_07_21_veronica_analysis/workflows/rnaseq/references_data/references_data/human/gencode-v28/'
+indexDir <- file.path(dir, "transcriptome/salmon/human_gencode-v28/")
+gtfPath <- file.path(dir, "annotation/human_gencode-v28.gtf")
+fastaPath <- file.path(dir, "genome/human_gencode-v28.fasta")
+
+salmon_dir <- '/data/CARD_ARDIS/2023_07_21_veronica_analysis/workflows/rnaseq/data/rnaseq_samples/'
+dt_colData <- setDT(colData)
+dt_colData[, names:=bio_group]
+
+
+# Remove lane two rows since we already collapsed by bio_group when making salm,ton files
+dt_colData <- dt_colData[!duplicated(dt_colData, by="bio_group")]
+# Add salmon file paths
+dt_colData[, files:= paste0(salmon_dir, bio_group, '.salmon/quant.sf')]
+
+guides <- c(targeting_guide, nontargeting_guide)
+dt_colData_sub <- dt_colData[(group %in% target),]
+dt_colData_sub <- dt_colData_sub[guide_group %in% guides,]
+
+# If we're dealing with  sg200_N_TDP43kd_13_B2 get rid of it
+# for the interaction analysis
+dt_colData_sub <- subset(dt_colData_sub, sample != 'sg200_N_TDP43kd_13_B2')
+
+# Set conditions for this round
+dt_colData_sub$condition <- factor(dt_colData_sub$guide_group ,levels=c(targeting_guide,nontargeting_guide))
+dt_colData_sub$zone <- factor(dt_colData_sub$zone ,levels=c('N','S'))
+
+# Just like lcdb_wf ignore the version number
+se <- tximeta(dt_colData_sub, ignoreTxVersion=TRUE, txOut=TRUE)
+
+# library(org.Hs.eg.db)
+# se <- addIds(se,"REFSEQ",gene=FALSE)
+
+# Rename for the statistical portion
+y <- se
+
+
+library(fishpond)
+library(tibble)
+y <- scaleInfReps(y)
+y <- labelKeep(y)
+y <- y[mcols(y)$keep,]
+set.seed(1)
+# Looks like covariate is actually what we want plus interaction. The question is whether 
+# to use paired samples for the other things. It may be, if you follow closely, you will be able to
+# set up the pairing for this is as well if you choose.
+# # Mike Love gave his approval at https://support.bioconductor.org/p/9156147/#9156162
+y <- swish(y, x="zone", cov='condition', pair="pair", interaction=TRUE)
+
+sign_tran <- y[mcols(y)$qvalue< 0.05]
+df <- mcols(y)
+df$tx_name <- rownames(df)
+sign_tran <- as.tibble(df)
+sign_tran <- sign_tran[sign_tran$qvalue < 0.05,]
+# Must arrange by something for transite. Must specify what that is. They suggest log2FC
+sign_tran <- dplyr::arrange(sign_tran, log2FC, locfdr)
+sign_out <- apply(sign_tran, 2, as.character)
+write.csv(sign_out, paste0(base_folder, "diff_tran", contrast_name, ".csv"), quote=FALSE, row.names=FALSE)
+
+library(transite)
+
+library(biomaRt)
+ensembl <- useEnsembl(biomart = "genes", dataset = "hsapiens_gene_ensembl", mirror='useast')
+#search for terms
+i <- searchAttributes(mart=ensembl, pattern="RefSeq")
+i[1:20,]
+# The below just converts references
+#refseq_res <- getBM(attributes = c('ensembl_transcript_id_version', 'refseq_mrna'),
+#      filters = 'ensembl_transcript_id_version',
+#      values = sign_tran$tx_name,
+#      mart = ensembl)
+
+# We'll try with cdna and 3'UTR, and maybe with full transcript which is transcript_exon_intron
+
+# Delete previous file if it is there
+transcripts_file <- paste0(base_folder, "transcripts_", contrast_name, ".csv")
+if (file.exists(transcripts_file)) {file.remove(transcripts_file)}
+
+# Just trying to get all of sign_tran
+rows <- nrow(sign_tran)
+tran1 <- sign_tran[0:2000,]
+subs <- gsub("\\..*","", tran1$tx_name)
+sequences_tei_1 <- getSequence(id=subs, mart=ensembl, seqType='transcript_exon_intron', type='ensembl_transcript_id', useCache=TRUE)
+write.table(sequences_tei_1, paste0(base_folder, "transcripts_",contrast_name,".csv"), quote=FALSE, sep=',', row.names=FALSE)
+tran2 <- sign_tran[2001:4000,]
+subs <- gsub("\\..*","", tran2$tx_name)
+sequences_tei_2 <- getSequence(id=subs, mart=ensembl, seqType='transcript_exon_intron', type='ensembl_transcript_id', useCache=TRUE)
+write.table(sequences_tei_2, paste0(base_folder, "transcripts_",contrast_name,".csv"), append=TRUE, quote=FALSE, sep=',', row.names=FALSE)
+tran3 <- sign_tran[4001:6000,]
+subs <- gsub("\\..*","", tran3$tx_name)
+sequences_tei_3 <- getSequence(id=subs, mart=ensembl, seqType='transcript_exon_intron', type='ensembl_transcript_id', useCache=TRUE)
+write.table(sequences_tei_3, paste0(base_folder, "transcripts_",contrast_name,".csv"), append=TRUE, quote=FALSE, sep=',', row.names=FALSE)
+tran4 <- sign_tran[6001:8000,]
+subs <- gsub("\\..*","", tran4$tx_name)
+sequences_tei_4 <- getSequence(id=subs, mart=ensembl, seqType='transcript_exon_intron', type='ensembl_transcript_id', useCache=TRUE)
+write.table(sequences_tei_4, paste0(base_folder, "transcripts_",contrast_name,".csv"), append=TRUE, quote=FALSE, sep=',', row.names=FALSE)
+tran5 <- sign_tran[8001:10000,]
+subs <- gsub("\\..*","", tran5$tx_name)
+sequences_tei_5 <- getSequence(id=subs, mart=ensembl, seqType='transcript_exon_intron', type='ensembl_transcript_id', useCache=TRUE)
+write.table(sequences_tei_5, paste0(base_folder, "transcripts_",contrast_name,".csv"), append=TRUE, quote=FALSE, sep=',', row.names=FALSE)
+tran6 <- sign_tran[10001:rows,]
+subs <- gsub("\\..*","", tran6$tx_name)
+sequences_tei_6 <- getSequence(id=subs, mart=ensembl, seqType='transcript_exon_intron', type='ensembl_transcript_id', useCache=TRUE)
+write.table(sequences_tei_6, paste0(base_folder, "transcripts_",contrast_name,".csv"), append=TRUE, quote=FALSE, sep=',', row.names=FALSE)
+
+library(readr)
+library(stringr)
+library(dplyr)
+
+seqs_df <- read_csv(paste0(base_folder, "transcripts_",contrast_name,".csv"))
+seqs_df <- seqs_df[,c(2,1)]
+# get tx names from sign_tran
+subs <- gsub("\\..*","", sign_tran$tx_name)
+# Convert to RNA and order according to fdr in sign_tran
+seqs_df <- seqs_df %>%
+    mutate(across("transcript_exon_intron", \(x) str_replace_all(x, "T", "U"))) %>%
+    arrange(match(ensembl_transcript_id, subs))
+
+# Turn seqs into named vector
+# Will still need to pull out the ensembl_transcript_ids at the end
+seqs <- tibble::deframe(seqs_df)
+seqs <- seqs[names(seqs) != "ensembl_transcript_id"]
+# Remove bad characters
+seqs <- seqs[!grepl("N",seqs)]
+
+# Don't forget to set TMPDIR on the command line with some lscratch. Export TMPDIR=/lscratch/$SLURM_JOB_ID
+# # The real trick is to make sure there are no NA values
+result <- run_kmer_spma(seqs, sign_tran$log2FC,transcript_values_label="log2FC",n_cores=10, n_bins=40)
+saveRDS(result, paste0(base_folder, contrast_name,".rds"))
+```
+
+# Session info
+For reproducibility purposes, here is the output of `sessionInfo()` showing the
+versions of all packages used here.
+
+```{r sessioninfo}
+sessionInfo()
+```

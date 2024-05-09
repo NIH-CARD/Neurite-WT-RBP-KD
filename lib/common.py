@@ -751,7 +751,7 @@ def is_paired_end(sampletable, sample):
     return False
 
 
-def fill_r1_r2(sampletable, pattern, r1_only=False):
+def fill_r1_r2(sampletable, pattern, r1_only=False, collapse_column=None):
     """
     Returns a function intended to be used as a rule's input function.
 
@@ -773,6 +773,7 @@ def fill_r1_r2(sampletable, pattern, r1_only=False):
 
     r1_only : bool
         If True, then only return the file for R1 even if PE is configured.
+
     """
     def func(wc):
         try:
