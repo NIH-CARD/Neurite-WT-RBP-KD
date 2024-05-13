@@ -1,0 +1,913 @@
+---
+title: Differential expression analysis
+output:
+    html_document:
+        code_folding: hide
+        toc: true
+        toc_float: true
+        toc_depth: 3
+---
+
+```{r global_options, include=FALSE}
+# Sets up global options for rendering RMarkdown into HTML.
+knitr::opts_chunk$set(
+    warning=FALSE,
+    message=FALSE,
+    cache.extra_file_dep_1 = file.info('../config/sampletable.tsv')$mtime,
+    cache.extra_file_dep_2 = file.info('../data/rnaseq_aggregation/featurecounts_features.txt')$mtime,
+    cache.extra_file_dep_3 = file.info('../data/rnaseq_samples/*/*.kallisto/abundance.h5')$mtime,
+    cache.extra_file_dep_4 = file.info('../data/rnaseq_samples/*/*.salmon/quant.sf')$mtime
+)
+```
+
+```{r lcdbwf, results='hide'}
+# Load the lcdbwf R package, which is stored locally.
+# This package has many custom functions used throughout this document.
+devtools::document('../../../lib/lcdbwf')
+devtools::load_all('../../../lib/lcdbwf')
+```
+
+
+```{r config}
+
+# HOW TO CONFIGURE ------------------------------------------------------
+# Any chunks below that depend on config options should be cached and use one
+# or more sections of the config object as arbitrary additional chunk options.
+# By convention, we use the argument name "config" although there is nothing
+# special about this name e.g.,
+#
+#      {r, cache=TRUE, config=config$annotation}
+#
+# Thereafter, any changes to config options under the "annotation" section will then
+# invalidate that chunk's cache -- along with any other chunks that also have
+# config$annotation included as a chunk option.
+#
+config <- lcdbwf:::load_config('config.yaml')
+
+# To keep this Rmd streamlined, much of the text is stored in a different file,
+# text.yaml, and accessed via the `text` list after it is loaded here.
+text <- yaml::yaml.load_file('text.yaml')
+
+parallel <- config$parallel$parallel
+if (config$parallel$parallel){
+    register(MulticoreParam(config$parallel$cores))
+}
+```
+
+
+# Changelog
+
+**Initial results**
+
+Last run: `r date()`
+
+```{r coldata_setup}
+# Set up all of the metadata for the samples and experimental design. Use this
+# chunk to modify if needed.
+# https://bioconductor.org/packages/devel/bioc/vignettes/tximeta/inst/doc/tximeta.html
+# Normally don't recommend this but if we want everything to be consistent it is important to
+# use the same gtf files rather than having them downloaded automatically.
+colData <- read.table(config$main$sampletable, sep='\t', header=TRUE, stringsAsFactors=FALSE)
+
+# lcdb-wf requires that the first column of the sampletable contain sample
+# names. Use that to set the rownames.
+rownames(colData) <- colData[,1]
+```
+
+```{r dds_initial, cache=TRUE, config=c(config$main, config$toggle$salmon, config$toggle$kallisto)}
+# Convert featureCounts transcript-level counts into DESeq2 object, and run
+# variance-stabiliizing transform.
+# Will likely need to find a way to run salmon quant to combine the collapsable samples to 
+# do that like this:
+# salmon quant -i transcripts_index -l <LIBTYPE> \
+#  -1 reads01_1.fq  reads02_1.fq \
+#  -2 reads01_2.fq reads02_2.fq \
+#  -o sample
+# Will need to make a dataframe like this for the sampletable: https://support.bioconductor.org/p/9149213/
+# use fishpond 
+library(tximeta)
+library(data.table)
+
+dir <- '/data/CARD_ARDIS/2023_07_21_veronica_analysis/workflows/rnaseq/references_data/references_data/human/gencode-v28/'
+indexDir <- file.path(dir, "transcriptome/salmon/human_gencode-v28/")
+gtfPath <- file.path(dir, "annotation/human_gencode-v28.gtf")
+fastaPath <- file.path(dir, "genome/human_gencode-v28.fasta")
+
+salmon_dir <- '/data/CARD_ARDIS/2023_07_21_veronica_analysis/workflows/rnaseq/data/rnaseq_samples/'
+dt_colData <- setDT(colData)
+dt_colData[, names:=bio_group]
+
+# Remove lane two rows since we already collapsed by bio_group when making salmon files
+dt_colData <- dt_colData[!duplicated(dt_colData, by="bio_group")]
+# Add salmon file paths
+dt_colData[, files:= paste0(salmon_dir, bio_group, '.salmon/quant.sf')]
+
+dt_colData_WT <- dt_colData[full_guide_grp %in% c('WT_N', 'WT_S'),]
+
+# Set conditions for this round
+dt_colData_WT$condition <- factor(dt_colData_WT$full_guide_grp ,levels=c("WT_N", "WT_S"))
+
+# Just like lcdb_wf ignore the version number
+se <- tximeta(dt_colData_WT, ignoreTxVersion=TRUE, txOut=TRUE)
+
+# library(org.Hs.eg.db)
+# se <- addIds(se,"REFSEQ",gene=FALSE)
+
+# Rename for the statistical portion
+y <- se
+
+
+library(fishpond)
+library(tibble)
+y <- scaleInfReps(y)
+y <- labelKeep(y)
+y <- y[mcols(y)$keep,]
+set.seed(1)
+y <- swish(y, x="condition")
+
+# Get the rows with an FDR in the 5% level
+sign_tran <- y[mcols(y)$qvalue < 0.05]
+write.csv(mcols(sign_tran)[7], "diff_tran.csv", quote=FALSE)
+df <- mcols(y)
+df$tx_name <- rownames(df)
+sign_tran <- as.tibble(df)
+sign_tran <- sign_tran[sign_tran$qvalue < 0.05,]
+# Must arrange by something for transite. Must specify what that is. They suggest log2FC
+sign_tran <- dplyr::arrange(sign_tran, desc(log2FC), locfdr)
+
+library(transite)
+
+library(biomaRt)
+ensembl <- useEnsembl(biomart = "genes", dataset = "hsapiens_gene_ensembl", mirror='useast')
+#search for terms
+i <- searchAttributes(mart=ensembl, pattern="RefSeq")
+i[1:20,]
+# The below just converts references
+#refseq_res <- getBM(attributes = c('ensembl_transcript_id_version', 'refseq_mrna'),
+#      filters = 'ensembl_transcript_id_version',
+#      values = sign_tran$tx_name,
+#      mart = ensembl)
+
+# We'll try with cdna and 3'UTR, and maybe with full transcript which is transcript_exon_intron
+
+
+#refseq <- read_tsv("../references_data/gencode.v44.metadata.RefSeq", col_names=c("ENSEMBL", "RefSeq"))
+#inner_join(sign_tran, refseq, join_by(tx_name == ENSEMBL))
+
+
+# Just trying to get all of sign_tran
+rows <- nrow(sign_tran)
+tran1 <- sign_tran[1:2000,]
+subs <- gsub("\\..*","", tran1$tx_name)
+sequences_tei_1 <- getSequence(id=subs, mart=ensembl, seqType='transcript_exon_intron', type='ensembl_transcript_id')
+write.table(sequences_tei_1, "transcripts_2.csv", quote=FALSE, sep=',', row.names=FALSE)
+tran2 <- sign_tran[2001:4000,]
+subs <- gsub("\\..*","", tran2$tx_name)
+sequences_tei_2 <- getSequence(id=subs, mart=ensembl, seqType='transcript_exon_intron', type='ensembl_transcript_id')
+write.table(sequences_tei_2, "transcripts_2.csv", append=TRUE, quote=FALSE, sep=',', row.names=FALSE)
+tran3 <- sign_tran[4001:6000,]
+subs <- gsub("\\..*","", tran3$tx_name)
+sequences_tei_3 <- getSequence(id=subs, mart=ensembl, seqType='transcript_exon_intron', type='ensembl_transcript_id')
+write.table(sequences_tei_3, "transcripts_2.csv", append=TRUE, quote=FALSE, sep=',', row.names=FALSE)
+tran4 <- sign_tran[6001:8000,]
+subs <- gsub("\\..*","", tran4$tx_name)
+sequences_tei_4 <- getSequence(id=subs, mart=ensembl, seqType='transcript_exon_intron', type='ensembl_transcript_id')
+write.table(sequences_tei_4, "transcripts_2.csv", append=TRUE, quote=FALSE, sep=',', row.names=FALSE)
+tran5 <- sign_tran[8001:10000,]
+subs <- gsub("\\..*","", tran5$tx_name)
+sequences_tei_5 <- getSequence(id=subs, mart=ensembl, seqType='transcript_exon_intron', type='ensembl_transcript_id')
+write.table(sequences_tei_5, "transcripts_2.csv", append=TRUE, quote=FALSE, sep=',', row.names=FALSE)
+tran6 <- sign_tran[10001:rows,]
+subs <- gsub("\\..*","", tran6$tx_name)
+sequences_tei_6 <- getSequence(id=subs, mart=ensembl, seqType='transcript_exon_intron', type='ensembl_transcript_id')
+write.table(sequences_tei_6, "transcripts_2.csv", append=TRUE, quote=FALSE, sep=',', row.names=FALSE)
+
+library(readr)
+library(stringr)
+library(dplyr)
+
+seqs_df <- read_csv("transcripts_2.csv")
+seqs_df <- seqs_df[,c(2,1)]
+# get tx names from sign_tran
+subs <- gsub("\\..*","", sign_tran$tx_name)
+# Convert to RNA and order according to log2FC in sign_tran
+seqs_df <- seqs_df %>%
+    mutate(across("transcript_exon_intron", \(x) str_replace_all(x, "T", "U"))) %>%
+    arrange(match(ensembl_transcript_id, subs))
+
+# Turn seqs into named vector
+# Will still need to pull out the ensembl_transcript_ids at the end
+seqs <- tibble::deframe(seqs_df)
+seqs <- seqs[names(seqs) != "ensembl_transcript_id"]
+# Remove bad characters
+seqs <- seqs[!grepl("N",seqs)]
+
+# Don't forget to set TMPDIR on the command line with some lscratch. Export TMPDIR=/lscratch/$SLURM_JOB_ID
+# # The real trick is to make sure there are no NA values
+result <- run_kmer_spma(seqs, sign_tran$log2FC,transcript_values_label="log2FC",n_cores=20)
+saveRDS(result, "N_vs_S.rds")
+
+
+# ##### contrast=c('full_guide_grp', 'sg100_S_TDP43kd', 'sg100_N_TDP43kd'),
+#################### # NEXT CONTRAST #################3####
+
+dt_colData_sg100 <- dt_colData[full_guide_grp %in% c('sg100_N_TDP43kd', 'sg100_S_TDP43kd'),]
+
+# Set conditions for this round
+dt_colData_sg100$condition <- factor(dt_colData_sg100$full_guide_grp ,levels=c("sg100_N_TDP43kd", "sg100_S_TDP43kd"))
+
+# Just like lcdb_wf ignore the version number
+se <- tximeta(dt_colData_sg100, ignoreTxVersion=TRUE, txOut=TRUE)
+
+# library(org.Hs.eg.db)
+# se <- addIds(se,"REFSEQ",gene=FALSE)
+
+# Rename for the statistical portion
+y <- se
+
+
+library(fishpond)
+library(tibble)
+y <- scaleInfReps(y)
+y <- labelKeep(y)
+y <- y[mcols(y)$keep,]
+set.seed(1)
+y <- swish(y, x="condition")
+
+# Get the rows with an FDR in the 5% level
+sign_tran_sg100 <- y[mcols(y)$qvalue < 0.05]
+write.csv(mcols(sign_tran_sg100)[7], "diff_tran_sg100.csv", quote=FALSE)
+df <- mcols(y)
+df$tx_name <- rownames(df)
+sign_tran_sg100 <- as.tibble(df)
+sign_tran_sg100 <- sign_tran_sg100[sign_tran_sg100$qvalue < 0.05,]
+# Must arrange by something for transite. Must specify what that is. They suggest log2FC
+sign_tran_sg100 <- dplyr::arrange(sign_tran_sg100, desc(log2FC), locfdr)
+
+library(transite)
+
+library(biomaRt)
+ensembl <- useEnsembl(biomart = "genes", dataset = "hsapiens_gene_ensembl", mirror='useast')
+#search for terms
+i <- searchAttributes(mart=ensembl, pattern="RefSeq")
+i[1:20,]
+
+# Just trying to get all of sign_tran
+rows <- nrow(sign_tran_sg100)
+tran1 <- sign_tran_sg100[1:2000,]
+subs <- gsub("\\..*","", tran1$tx_name)
+sequences_tei_1 <- getSequence(id=subs, mart=ensembl, seqType='transcript_exon_intron', type='ensembl_transcript_id')
+write.table(sequences_tei_1, "transcripts_3_sg100.csv", quote=FALSE, sep=',', row.names=FALSE)
+tran2 <- sign_tran_sg100[2001:4000,]
+subs <- gsub("\\..*","", tran2$tx_name)
+sequences_tei_2 <- getSequence(id=subs, mart=ensembl, seqType='transcript_exon_intron', type='ensembl_transcript_id')
+write.table(sequences_tei_2, "transcripts_3_sg100.csv", append=TRUE, quote=FALSE, sep=',', row.names=FALSE)
+tran3 <- sign_tran_sg100[4001:6000,]
+subs <- gsub("\\..*","", tran3$tx_name)
+sequences_tei_3 <- getSequence(id=subs, mart=ensembl, seqType='transcript_exon_intron', type='ensembl_transcript_id')
+write.table(sequences_tei_3, "transcripts_3_sg100.csv", append=TRUE, quote=FALSE, sep=',', row.names=FALSE)
+tran4 <- sign_tran_sg100[6001:8000,]
+subs <- gsub("\\..*","", tran4$tx_name)
+sequences_tei_4 <- getSequence(id=subs, mart=ensembl, seqType='transcript_exon_intron', type='ensembl_transcript_id')
+write.table(sequences_tei_4, "transcripts_3_sg100.csv", append=TRUE, quote=FALSE, sep=',', row.names=FALSE)
+tran5 <- sign_tran_sg100[8001:10000,]
+subs <- gsub("\\..*","", tran5$tx_name)
+sequences_tei_5 <- getSequence(id=subs, mart=ensembl, seqType='transcript_exon_intron', type='ensembl_transcript_id')
+write.table(sequences_tei_5, "transcripts_3_sg100.csv", append=TRUE, quote=FALSE, sep=',', row.names=FALSE)
+tran6 <- sign_tran_sg100[10001:rows,]
+subs <- gsub("\\..*","", tran6$tx_name)
+sequences_tei_6 <- getSequence(id=subs, mart=ensembl, seqType='transcript_exon_intron', type='ensembl_transcript_id')
+write.table(sequences_tei_6, "transcripts_3_sg100.csv", append=TRUE, quote=FALSE, sep=',', row.names=FALSE)
+
+library(readr)
+library(stringr)
+library(dplyr)
+
+seqs_df <- read_csv("transcripts_3_sg100.csv")
+seqs_df <- seqs_df[,c(2,1)]
+# get tx names from sign_tran_sg100
+subs <- gsub("\\..*","", sign_tran_sg100$tx_name)
+# Convert to RNA and order according to log2FC in sign_tran_sg100
+seqs_df <- seqs_df %>%
+    mutate(across("transcript_exon_intron", \(x) str_replace_all(x, "T", "U"))) %>%
+    arrange(match(ensembl_transcript_id, subs))
+
+# Turn seqs into named vector
+# Will still need to pull out the ensembl_transcript_ids at the end
+seqs <- tibble::deframe(seqs_df)
+seqs <- seqs[names(seqs) != "ensembl_transcript_id"]
+# Remove bad characters
+seqs <- seqs[!grepl("N",seqs)]
+
+
+# Don't forget to set TMPDIR on the command line with some lscratch. Export TMPDIR=/lscratch/$SLURM_JOB_ID
+# # The real trick is to make sure there are no NA values
+result <- run_kmer_spma(seqs, sign_tran_sg100$log2FC,transcript_values_label="log2FC",n_cores=20)
+saveRDS(result, "sg100_N_vs_sg100_S.rds")
+
+
+# Now do with the next contrast
+
+
+
+makeLinkedTxome(indexDir=indexDir,
+                source="LocalGENCODE",
+                organism="Homo sapiens",
+                release="28",
+                genome="GRCh38",
+                fasta=fastaPath,
+                gtf=gtfPath,
+                write=FALSE)
+coldata <- data.frame(files=files, names="sg100_S_FUSkd_8_L1", group="sg100_S_FUSkd_8", stringsAsFactors=FALSE)
+
+dds_initial <- lcdbwf:::make_dds(
+  list(sampletable=colData, design=~1),
+  featureCounts='../data/rnaseq_aggregation/featurecounts_features.txt',
+  config=config,
+  parallel=config$parallel$parallel
+)
+vsd <- varianceStabilizingTransformation(dds_initial, blind=TRUE)
+```
+
+# Experiment overview
+
+Here is the sample table with metadata used for this analysis:
+
+```{r print_coldata}
+exclude.for.printing <- c('featurecounts.path', 'salmon.path', 'kallisto.path',
+                          'orig_filename', 'orig_filename_R2', 'layout',
+                          'sizeFactor')
+colData(dds_initial) %>%
+    as.data.frame() %>%
+    dplyr::select(-contains(exclude.for.printing)) %>%
+    datatable()
+```
+
+
+# Sample similarity and QC
+
+## Clustered heatmap
+
+```{r sample_heatmap, results='asis', cache=TRUE, config=c(text$qc$clustered_heatmap, config$plotting$covariates_for_plots), dependson='dds_initial'}
+# Plot a clustered heatmap of sample distances, for QC.
+lcdbwf:::mdcat(text$qc$clustered_heatmap)
+lcdbwf:::plot_heatmap(vsd, colData, cols_for_grouping=config$plotting$covariates_for_plots)
+```
+
+## PCA {.tabset}
+
+### WT {.tabset}
+
+```{r pca_2, results='asis', cache=TRUE, config=c(text$qc$pca, config$plotting$covariates_for_plots), dependson='dds_initial'}
+# Plot PCA plots, optionally tabbed with different factors colored, for QC.
+lcdbwf:::mdcat(text$qc$pca)
+
+for(group in config$plotting$covariates_for_plots){
+    lcdbwf:::mdcat('#### ', paste(group, sep=", "))
+    p <- lcdbwf:::plotPCA.ly(vsd, intgroup=group)
+    print(htmltools::tagList(ggplotly(p)))
+}
+```
+
+### NO WT {.tabset}
+
+```{r pca, results='asis', cache=TRUE, config=c(text$qc$pca, config$plotting$covariates_for_plots), dependson='dds_initial'}
+# Plot PCA plots, optionally tabbed with different factors colored, for QC.
+vsd_no_wt <- vsd[,vsd$group != 'WT']
+#lcdbwf:::mdcat('#### NO WT')
+for(group in config$plotting$covariates_for_plots){
+    lcdbwf:::mdcat('#### ', paste(group, sep=", "))
+    p <- lcdbwf:::plotPCA.ly(vsd_no_wt, intgroup=group)
+    print(htmltools::tagList(ggplotly(p)))
+}
+```
+
+```{r sizefactors, results='asis', eval=!(config$toggle$salmon | config$toggle$kallisto)}
+# Note that when loading Salmon or Kallisto, DESeq2 does not calculate size
+# factors.
+
+lcdbwf:::mdcat(text$sizefactors)
+lcdbwf:::mdcat("### Size factors")
+p <- lcdbwf:::sizefactors_barplot(dds_initial)
+ggplotly(p)
+
+lcdbwf:::mdcat("### Size factors vs total read count")
+p <- lcdbwf:::sizefactors_vs_total(dds_initial)
+ggplotly(p)
+```
+
+```{r dds_list, cache=TRUE, config=config$main}
+# Create a list of dds objects used as the basis for differential expression.
+#
+# May need substantial editing.
+lst <- list(
+            # NOTE: Delete these for real data!
+            # They are just examples to demonstrate functionality.
+            #
+            # Example 1: simplest case
+            main=list(
+                sampletable=colData,
+                design=~full_guide_grp)
+
+            # Example 2: demonstrates how to filter samples.
+            # Note that subset.counts=TRUE is required when filtering.
+            #no_rep4=list(
+            #    sampletable=colData %>% filter(samplename != 'sample4'),
+            #    design=~group,
+            #    subset_counts=TRUE
+            #),
+
+            # Example 3: use salmon
+            #salmon=list(
+            #    sampletable=colData,
+            #    design=~full_guide_grp,
+             #   salmon=TRUE)
+
+           # # Example 4: use kallisto
+            #kallisto=list(
+            #    sampletable=colData,
+            #    design=~full_guide_grp,
+            #    kallisto=TRUE)
+            # ------------------------------------------------------------------
+          )
+dds_list <- map(lst, lcdbwf:::make_dds, config=config, parallel=config$parallel$parallel)
+```
+
+
+```{r dds_diagnostics, results='asis', cache=TRUE, dependson='dds_list', config=config$toggle$dds_diagnostics}
+if (config$toggle$dds_diagnostics){ lcdbwf:::dds_diagnostics(dds_list, text) }
+```
+
+# Differential expression {.tabset}
+
+Now we perform differential expression analysis for the contrasts listed in the
+table below.
+
+Under the table are tabs, one for each contrast. Under each contrast's tab,
+there are more tabs for the various output.
+
+```{r results_00, dependson='dds_list', cache=TRUE, eval=FALSE}
+# Perform differential expression testing.
+#
+# ------------------------------------------------------------------------------
+# To take advantage of caching:
+#   - create each list in a different chunk
+#   - ensure chunk name starts with "results_"
+#   - ensure list name starts with "contr_[index]_". The rest of the name will be used
+#     as a readable label for each constrast. [index] is an alphanumeric string 
+#     (ex: contr_01_* or contr_2b_*) that will be used to sort contrasts for output files.
+#     The index string must contain at least 1 character and cannot contain "_"
+#
+# This will need substantial editing.
+#
+# See ?make_results for details.
+# ------------------------------------------------------------------------------
+
+# Delete these for real data!
+#
+# Example 1:
+#  - demonstrates creating and manipulating coefficients
+#control <- lcdbwf:::dds_coefs('main', group=='control')
+#treatment <- lcdbwf:::dds_coefs('main', group=='treatment')
+#contr_01_main <- lcdbwf:::make_results(
+#  dds_name='main',
+ # label='LFC>0',
+ # contrast=treatment - control,
+ # type='ashr'
+#)
+```
+
+```{r results_01, dependson='dds_list', cache=TRUE}
+contr_01afa_lfc0_WTWT_fc <- lcdbwf:::make_results(
+  dds_name="main",
+  contrast=c("full_guide_grp", "WT_S", "WT_N"),
+  #lfcThreshold=1,
+  type="ashr",
+  label="Soma-- Neurite WT lfc >0 FeatureC"
+)
+```
+
+```{r results_011, dependson='dds_list', cache=TRUE}
+contr_01afa_lfc1_WTWT_fc <- lcdbwf:::make_results(
+  dds_name="main",
+  contrast=c("full_guide_grp", "WT_S", "WT_N"),
+  lfcThreshold=1,
+  type="ashr",
+  label="Soma-- Neurite WT lfc >1 FeatureC"
+)
+```
+
+```{r results_02, dependson='dds_list', cache=TRUE, eval=FALSE}
+contr_01af_lfc0_WTWT_sal <- lcdbwf:::make_results(
+  dds_name="salmon",
+  contrast=c("full_guide_grp", "WT_S", "WT_N"),
+  type="ashr",
+  label="Soma -- Neurite WT lfc >0 Salmon"
+)
+```
+
+```{r results_03, dependson='dds_list', cache=TRUE}
+# main contrasts first, then salmon and kallisto
+contr_02af_sg100_SN_TDP <- lcdbwf:::make_results(
+  dds_name="main",
+  contrast=c('full_guide_grp', 'sg100_S_TDP43kd', 'sg100_N_TDP43kd'),
+  type='ashr',
+  label='NT Soma -- Neurite TDP43kd lfc > 0 FeatureC'
+)
+```
+
+```{r results_031, dependson='dds_list', cache=TRUE}
+# main contrasts first, then salmon and kallisto
+contr_02af_sg100_SN_TDP_lfc1 <- lcdbwf:::make_results(
+  dds_name="main",
+  contrast=c('full_guide_grp', 'sg100_S_TDP43kd', 'sg100_N_TDP43kd'),
+  type='ashr',
+  lfcTheshold=1,
+  label='NT Soma -- Neurite TDP43kd lfc > 1 FeatureC'
+)
+```
+
+```{r results_04, dependson='dds_list', cache=TRUE}
+# main contrasts first, then salmon and kallisto
+contr_02bf_200NTSS_TDP_lfc0 <- lcdbwf:::make_results(
+  dds_name="main",
+  contrast=c('full_guide_grp', 'sg200_S_TDP43kd', 'sg100_S_TDP43kd'),
+  type='ashr',
+  label='sg200 Soma -- NT Soma TDP43kd lfc > 0 FeatureC'
+)
+```
+
+```{r results_041, dependson='dds_list', cache=TRUE}
+# main contrasts first, then salmon and kallisto
+contr_02bf_200NTSS_TDP_lfc1 <- lcdbwf:::make_results(
+  dds_name="main",
+  contrast=c('full_guide_grp', 'sg200_S_TDP43kd', 'sg100_S_TDP43kd'),
+  type='ashr',
+  lfcThreshold=1,
+  label='sg200 Soma -- NT Soma TDP43kd lfc > 1 FeatureC'
+)
+```
+
+```{r results_05, dependson='dds_list', cache=TRUE}
+# main contrasts first, then salmon and kallisto
+contr_02cf_200NT_NN_TDP_lfc0 <- lcdbwf:::make_results(
+  dds_name="main",
+  contrast=c('full_guide_grp', 'sg200_N_TDP43kd', 'sg100_N_TDP43kd'),
+  type='ashr',
+  label='sg200 Neurite -- NT Neurite TDP43kd lfc > 0 FeatureC'
+)
+```
+
+```{r results_051, dependson='dds_list', cache=TRUE}
+# main contrasts first, then salmon and kallisto
+contr_02cf_200NT_NN_TDP_lfc1 <- lcdbwf:::make_results(
+  dds_name="main",
+  contrast=c('full_guide_grp', 'sg200_N_TDP43kd', 'sg100_N_TDP43kd'),
+  type='ashr',
+  lfcThreshold=1,
+  label='sg200 Neurite -- NT Neurite TDP43kd lfc > 1 FeatureC'
+)
+```
+
+```{r results_06, dependson='dds_list', cache=TRUE}
+# main contrasts first, then salmon and kallisto
+contr_03af_NTNT_SN_FUS_lfc0 <- lcdbwf:::make_results(
+  dds_name="main",
+  contrast=c('full_guide_grp', 'sg100_S_FUSkd', 'sg100_N_FUSkd'),
+  type='ashr',
+  label='sg100 Soma -- Neurite FUSkd lfc > 0 FeatureC'
+)
+```
+
+```{r results_061, dependson='dds_list', cache=TRUE}
+# main contrasts first, then salmon and kallisto
+contr_03af_NTNT_SN_FUS_lfc1 <- lcdbwf:::make_results(
+  dds_name="main",
+  contrast=c('full_guide_grp', 'sg100_S_FUSkd', 'sg100_N_FUSkd'),
+  type='ashr',
+  lfcThreshold=1,
+  label='sg100 Soma -- Neurite FUSkd lfc > 1 FeatureC'
+)
+```
+
+```{r results_07, dependson='dds_list', cache=TRUE}
+# main contrasts first, then salmon and kallisto
+contr_03bf_1152NT_SS_FUS_lfc0 <- lcdbwf:::make_results(
+  dds_name="main",
+  contrast=c('full_guide_grp', 'sg1152_S_FUSkd', 'sg100_S_FUSkd'),
+  type='ashr',
+  label='sg1152 Soma -- NT Soma FUSkd lfc > 0 FeatureC'
+)
+```
+
+```{r results_071, dependson='dds_list', cache=TRUE}
+# main contrasts first, then salmon and kallisto
+contr_03bf_1152_SS_FUS_lfc1 <- lcdbwf:::make_results(
+  dds_name="main",
+  contrast=c('full_guide_grp', 'sg1152_S_FUSkd', 'sg100_S_FUSkd'),
+  type='ashr',
+  lfcThreshold=1,
+  label='sg1152 Soma -- NT Soma FUSkd lfc > 1 FeatureC'
+)
+```
+
+```{r results_08, dependson='dds_list', cache=TRUE}
+# main contrasts first, then salmon and kallisto
+contr_03cf_1152NT_NN_FUS_lfc0 <- lcdbwf:::make_results(
+  dds_name="main",
+  contrast=c('full_guide_grp', 'sg1152_N_FUSkd', 'sg100_N_FUSkd'),
+  type='ashr',
+  label='sg1152 Neurite -- NT Neurite FUSkd lfc > 0 FeatureC'
+)
+```
+
+```{r results_081, dependson='dds_list', cache=TRUE}
+# main contrasts first, then salmon and kallisto
+contr_03cf_1152NT_NN_FUS_lfc1 <- lcdbwf:::make_results(
+  dds_name="main",
+  contrast=c('full_guide_grp', 'sg1152_N_FUSkd', 'sg100_N_FUSkd'),
+  type='ashr',
+  lfcThreshold=1,
+  label='sg1152 Neurite -- NT Neurite FUSkd lfc > 1 FeatureC'
+)
+```
+
+```{r results_09, dependson='dds_list', cache=TRUE}
+# main contrasts first, then salmon and kallisto
+contr_04af_1126_SN_HNRN_lfc0 <- lcdbwf:::make_results(
+  dds_name="main",
+  contrast=c('full_guide_grp', 'sg1126_S_HNRNPA1kd', 'sg1126_N_HNRNPA1kd'),
+  type='ashr',
+  label='sg1126 Soma -- Neurite HNRNPA1kd lfc > 0 FeatureC'
+)
+```
+
+```{r results_09_1, dependson='dds_list', cache=TRUE}
+# main contrasts first, then salmon and kallisto
+contr_04af_1126_SN_HNRN_lfc1 <- lcdbwf:::make_results(
+  dds_name="main",
+  contrast=c('full_guide_grp', 'sg1126_S_HNRNPA1kd', 'sg1126_N_HNRNPA1kd'),
+  type='ashr',
+  lfcThreshold=1,
+  label='sg1126 Soma -- Neurite HNRNPA1kd lfc > 1 FeatureC'
+)
+```
+
+```{r results_10, dependson='dds_list', cache=TRUE}
+# main contrasts first, then salmon and kallisto
+contr_04bf_1128_1126_SS_HNRN_lfc0 <- lcdbwf:::make_results(
+  dds_name="main",
+  contrast=c('full_guide_grp', 'sg1128_S_HNRNPA1kd', 'sg1126_S_HNRNPA1kd'),
+  type='ashr',
+  label='sg1128 Soma -- sg1126 Soma HNRNPA1kd lfc > 0 FeatureC'
+)
+```
+
+```{r results_10_1, dependson='dds_list', cache=TRUE}
+# main contrasts first, then salmon and kallisto
+contr_04bf_1128_1126_SS_HNRN_lfc1 <- lcdbwf:::make_results(
+  dds_name="main",
+  contrast=c('full_guide_grp', 'sg1128_S_HNRNPA1kd', 'sg1126_S_HNRNPA1kd'),
+  type='ashr',
+  lfcThreshold=1,
+  label='sg1128 Soma -- sg1126 Soma HNRNPA1kd lfc > 1 FeatureC'
+)
+```
+
+```{r results_11, dependson='dds_list', cache=TRUE}
+# main contrasts first, then salmon and kallisto
+contr_04cf_1128_1126_NN_HNRN_lfc0 <- lcdbwf:::make_results(
+  dds_name="main",
+  contrast=c('full_guide_grp', 'sg1128_N_HNRNPA1kd', 'sg1126_N_HNRNPA1kd'),
+  type='ashr',
+  label='sg1128 Neurite -- sg1126 Neurite HNRNPA1kd lfc > 0 FeatureC'
+)
+```
+
+```{r results_11_1, dependson='dds_list', cache=TRUE}
+# main contrasts first, then salmon and kallisto
+contr_04cf_1128_1126_NN_HNRN_lfc1 <- lcdbwf:::make_results(
+  dds_name="main",
+  contrast=c('full_guide_grp', 'sg1128_N_HNRNPA1kd', 'sg1126_N_HNRNPA1kd'),
+  type='ashr',
+  lfcThreshold=1,
+  label='sg1128 Neurite -- sg1126 Neurite HNRNPA1kd lfc > 1 FeatureC'
+)
+```
+
+```{r results_12, dependson='dds_list', cache=TRUE, eval=FALSE}
+contr_02as_jlfc0 <- lcdbwf:::make_results(
+  dds_name="salmon",
+  contrast=c('full_guide_grp', 'sg100_S_TDP43kd', 'sg100_N_TDP43kd'),
+  type='ashr',
+  label='sg100 Soma -- Neurite TDP43kd lfc > 0 Salmon'
+)
+```
+
+```{r results_13, dependson='dds_list', cache=TRUE, eval=FALSE}
+contr_02bs_klfc0 <- lcdbwf:::make_results(
+  dds_name="salmon",
+  contrast=c('full_guide_grp', 'sg200_S_TDP43kd', 'sg100_S_TDP43kd'),
+  type='ashr',
+  label='sg200 Soma -- sg100 Soma TDP43kd lfc > 0 Salmon'
+)
+```
+
+```{r results_14, dependson='dds_list', cache=TRUE, eval=FALSE}
+contr_02cs_lfc0 <- lcdbwf:::make_results(
+  dds_name="salmon",
+  contrast=c('full_guide_grp', 'sg200_N_TDP43kd', 'sg100_N_TDP43kd'),
+  type='ashr',
+  label='sg200 Neurite -- sg100 Neurite TDP43kd lfc > 0 Salmon'
+)
+```
+
+```{r results_15, dependson='dds_list', cache=TRUE, eval=FALSE}
+contr_03as_lfc0 <- lcdbwf:::make_results(
+  dds_name="salmon",
+  contrast=c('full_guide_grp', 'sg100_S_FUSkd', 'sg100_N_FUSkd'),
+  type='ashr',
+  label='sg100 Soma -- Neurite FUSkd lfc > 0 Salmon'
+)
+```
+
+```{r results_16, dependson='dds_list', cache=TRUE, eval=FALSE}
+contr_03bs_lfc0 <- lcdbwf:::make_results(
+  dds_name="salmon",
+  contrast=c('full_guide_grp', 'sg1152_S_FUSkd', 'sg100_S_FUSkd'),
+  type='ashr',
+  label='sg1152 Soma -- sg100 Soma FUSkd lfc > 0 Salmon'
+)
+```
+
+```{r results_17, dependson='dds_list', cache=TRUE, eval=FALSE}
+contr_03cs_lfc0 <- lcdbwf:::make_results(
+  dds_name="salmon",
+  contrast=c('full_guide_grp', 'sg1152_N_FUSkd', 'sg100_N_FUSkd'),
+  type='ashr',
+  label='sg1152 Neurite -- sg100 Neurite FUSkd lfc > 0 Salmon'
+)
+```
+
+```{r results_18, dependson='dds_list', cache=TRUE, eval=FALSE}
+contr_04as_lfc0 <- lcdbwf:::make_results(
+  dds_name="salmon",
+  contrast=c('full_guide_grp', 'sg1126_S_HNRNPA1kd', 'sg1126_N_HNRNPA1kd'),
+  type='ashr',
+  label='sg1126 Soma -- Neurite HNRNPA1kd lfc > 0 Salmon'
+)
+```
+
+```{r results_19, dependson='dds_list', cache=TRUE, eval=FALSE}
+contr_04bs_lfc0 <- lcdbwf:::make_results(
+  dds_name="salmon",
+  contrast=c('full_guide_grp', 'sg1128_S_HNRNPA1kd', 'sg1126_S_HNRNPA1kd'),
+  type='ashr',
+  label='sg1128 Soma -- sg1126 Soma HNRNPA1kd lfc > 0 Salmon'
+)
+```
+
+```{r results_20, dependson='dds_list', cache=TRUE, eval=FALSE}
+contr_04cs_lfc0 <- lcdbwf:::make_results(
+  dds_name="salmon",
+  contrast=c('full_guide_grp', 'sg1128_N_HNRNPA1kd', 'sg1126_N_HNRNPA1kd'),
+  type='ashr',
+  label='sg1128 Neurite -- sg1126 Neurite HNRNPA1kd lfc > 0 Salmon'
+)
+```
+
+```{r results_21, dependson='dds_list', cache=TRUE, eval=FALSE}
+contr_02ak_lfc0 <- lcdbwf:::make_results(
+  dds_name="kallisto",
+  contrast=c('full_guide_grp', 'sg100_S_TDP43kd', 'sg100_N_TDP43kd'),
+  type='ashr',
+  label='sg100 Soma -- Neurite TDP43kd lfc > 0 kallisto'
+)
+```
+
+```{r results_22, dependson='dds_list', cache=TRUE, eval=FALSE}
+contr_02bk_lfc0 <- lcdbwf:::make_results(
+  dds_name="kallisto",
+  contrast=c('full_guide_grp', 'sg200_S_TDP43kd', 'sg100_S_TDP43kd'),
+  type='ashr',
+  label='sg200 Soma -- sg100 Soma TDP43kd lfc > 0 kallisto'
+)
+```
+
+```{r results_23, dependson='dds_list', cache=TRUE, eval=FALSE}
+contr_02ck_lfc0 <- lcdbwf:::make_results(
+  dds_name="kallisto",
+  contrast=c('full_guide_grp', 'sg200_N_TDP43kd', 'sg100_N_TDP43kd'),
+  type='ashr',
+  label='sg200 Neurite -- sg100 Neurite TDP43kd lfc > 0 kallisto'
+)
+```
+
+```{r results_24, dependson='dds_list', cache=TRUE, eval=FALSE}
+contr_03ak_lfc0 <- lcdbwf:::make_results(
+  dds_name="kallisto",
+  contrast=c('full_guide_grp', 'sg100_S_FUSkd', 'sg100_N_FUSkd'),
+  type='ashr',
+  label='sg100 Soma -- Neurite FUSkd lfc > 0 kallisto'
+)
+```
+
+```{r results_25, dependson='dds_list', cache=TRUE, eval=FALSE}
+contr_03bk_lfc0 <- lcdbwf:::make_results(
+  dds_name="kallisto",
+  contrast=c('full_guide_grp', 'sg1152_S_FUSkd', 'sg100_S_FUSkd'),
+  type='ashr',
+  label='sg1152 Soma -- sg100 Soma FUSkd lfc > 0 kallisto'
+)
+```
+
+```{r results_26, dependson='dds_list', cache=TRUE, eval=FALSE}
+contr_03ck_lfc0 <- lcdbwf:::make_results(
+  dds_name="kallisto",
+  contrast=c('full_guide_grp', 'sg1152_N_FUSkd', 'sg100_N_FUSkd'),
+  type='ashr',
+  label='sg1152 Neurite -- sg100 Neurite FUSkd lfc > 0 kallisto'
+)
+```
+
+```{r results_27, dependson='dds_list', cache=TRUE, eval=FALSE}
+contr_04ak_lfc0 <- lcdbwf:::make_results(
+  dds_name="kallisto",
+  contrast=c('full_guide_grp', 'sg1126_S_HNRNPA1kd', 'sg1126_N_HNRNPA1kd'),
+  type='ashr',
+  label='sg1126 Soma -- Neurite HNRNPA1kd lfc > 0 kallisto'
+)
+```
+
+```{r results_28, dependson='dds_list', cache=TRUE, eval=FALSE}
+contr_04bk_lfc0 <- lcdbwf:::make_results(
+  dds_name="kallisto",
+  contrast=c('full_guide_grp', 'sg1128_S_HNRNPA1kd', 'sg1126_S_HNRNPA1kd'),
+  type='ashr',
+  label='sg1128 Soma -- sg1126 Soma HNRNPA1kd lfc > 0 kallisto'
+)
+```
+
+```{r results_29, dependson='dds_list', cache=TRUE, eval=FALSE}
+contr_04ck_lfc0 <- lcdbwf:::make_results(
+  dds_name="kallisto",
+  contrast=c('full_guide_grp', 'sg1128_N_HNRNPA1kd', 'sg1126_N_HNRNPA1kd'),
+  type='ashr',
+  label='sg1128 Neurite -- sg1126 Neurite HNRNPA1kd lfc > 0 kallisto'
+)
+```
+
+```{r assemble_variables, cache=TRUE, config=config$annotation, dependson=knitr::all_labels()[grepl("^results_", knitr::all_labels())]}
+res_list <- lcdbwf:::collect_objects("^contr_[^_]+_")
+res_list <- lcdbwf:::attach_extra(res_list, config)
+```
+
+```{r summary, results='asis'}
+lcdbwf:::folded_markdown(text$results_table, "Help for table")
+lcdbwf:::summarize_res_list(res_list) %>% datatable
+```
+
+```{r reportresults, results='asis', config=c(text$results_plots, config$toggle$results_diagnostics, config$plotting$diagnostics_results_names), dependson='assemble_variables', cache=TRUE}
+# Create nested tabs showing the results.
+# First level of tabs will be labels of results; second level will be different
+# output (MA plot, volcano plot, etc)
+lcdbwf:::build_results_tabs(res_list, dds_list, config, text)
+```
+
+```{r upsetplots, results='asis', eval=length(res_list)>1, config=config$annotation}
+# Compare overlap across multiple differential expression contrasts.
+lcdbwf:::mdcat(text$upset_plots)
+lcdbwf:::plot_upsets(res_list, label_column=config$annotation$label_column)
+```
+
+# Exported results
+
+```{r excel, results='asis'}
+lcdbwf:::exported_excel(res_list, dds_list, file='results/consolidated_results.xlsx')
+```
+
+Here is a single Excel file with one worksheet for each contrast: [results/consolidated_results.xlsx](results/consolidated_results.xlsx)
+
+Alternatively, the files below are TSVs that can be opened in Excel or used
+progammatically with downstream tools:
+
+```{r write_output, results='asis'}
+# Write out files for full and each selection, and create a link to them in the
+# HTML generated by this RMarkdown.
+tbl <- lcdbwf:::exported_tsvs(res_list)
+knitr::kable(tbl, row.names=FALSE)
+```
+
+```{r combined_rds, cache=TRUE, dependson='assemble_variables'}
+obj <- lcdbwf:::compose_results(res_list, dds_list)
+saveRDS(obj, file='combined.Rds', compress=FALSE)
+```
+
+
+# Session info
+For reproducibility purposes, here is the output of `sessionInfo()` showing the
+versions of all packages used here.
+
+```{r sessioninfo}
+sessionInfo()
+```
