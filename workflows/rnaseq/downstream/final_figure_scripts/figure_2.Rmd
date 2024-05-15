@@ -79,7 +79,7 @@ colData <- read.table(config$main$sampletable, sep='\t', header=TRUE, stringsAsF
 rownames(colData) <- colData[,1]
 ```
 
-```{r dds_initial, cache=FALSE, config=c(config$main, config$toggle$salmon, config$toggle$kallisto)}
+```{r dds_initial, cache=TRUE, config=c(config$main, config$toggle$salmon, config$toggle$kallisto)}
 # Convert featureCounts transcript-level counts into DESeq2 object, and run
 # variance-stabiliizing transform.
 # Will likely need to find a way to run salmon quant to combine the collapsable samples to 
@@ -114,7 +114,7 @@ dt_colData_WT <- dt_colData[full_guide_grp %in% c(neurite_contrast, soma_contras
 dt_colData_WT$cellular_zone <- factor(dt_colData_WT$full_guide_grp ,levels=c(neurite_contrast, soma_contrast))
 ```
 
-```{r tximeta_setup, config=c(config$main, config$toggle$salmon, config$toggle$kallisto)}
+```{r tximeta_setup, cache=TRUE, depends='dds_initial', config=c(config$main, config$toggle$salmon, config$toggle$kallisto)}
 
 # Just like lcdb_wf ignore the version number
 # Use the full version for calculations outside of just one group
@@ -137,6 +137,7 @@ colData(vsd)$targeting <- case_match(colData(vsd)$guide_group,
                                      c('sg200', 'sg1152', 'sg1128') ~ 'targeting',
                                      'WT' ~ 'WT',
                                      )
+
 
 ```
 
@@ -175,7 +176,7 @@ ggsave(paste0("PCA_plots/", variable, "figure_2_pca_",first_PC, "_", second_PC, 
 
 ```
 
-```{r swish,onfig=c(config$main, config$toggle$salmon, config$toggle$kallisto)}
+```{r swish,config=c(config$main, config$toggle$salmon, config$toggle$kallisto)}
 
 library(fishpond)
 library(tibble)
@@ -184,23 +185,45 @@ y <- labelKeep(y)
 y <- y[mcols(y)$keep,]
 set.seed(1)
 
-y <- swish(y, x="cellular_zone", pair="pair")
+swee <- swish(y, x="cellular_zone", pair="pair")
 
 # Get the rows with an FDR in the 5% level
-sign_tran <- y[mcols(y)$qvalue< 0.05]
-df <- mcols(y)
+df <- mcols(swee)
 df$tx_name <- rownames(df)
 sign_tran <- as.tibble(df)
-sign_tran <- sign_tran[sign_tran$qvalue < 0.05,]
 # Must arrange by something for transite. Must specify what that is. They suggest log2FC
 sign_tran <- dplyr::arrange(sign_tran, log2FC, locfdr)
 sign_out <- apply(sign_tran, 2, as.character)
 write.csv(sign_out, paste0("diff_tran", contrast_name, ".csv"), quote=FALSE, row.names=FALSE)
 ```
+
+```{r volcano_plot,config=c(config$main, config$toggle$salmon, config$toggle$kallisto) }
+# Define significance threshold
+alpha <- 0.05
+
+# Create volcano plot
+volcano <- ggplot(sign_tran, aes(x = log2FC, y = -log10(qvalue))) +
+  geom_point(color = ifelse(sign_tran$qvalue < alpha, "red", "black"), size = 2) +
+  geom_hline(yintercept = -log10(alpha), linetype = "dashed", color = "blue") +
+  labs(x = "Log Fold Change", y = "-log10(q-value)", title = "Volcano Plot") +
+  theme_minimal()
 # Session info
 For reproducibility purposes, here is the output of `sessionInfo()` showing the
 versions of all packages used here.
 
+genedb <- fread('gene_table_GRCh38-2020-A.tsv')
+library(purrr)
+library(stringr)
+gene_ids_swee <- mcols(swee)$gene_id
+mcols(swee)$gene_id_trimmed <- sub("\\..*$", "", as.character(mcols(swee)$gene_id))
+gene_id_lookup <- merge(genedb, mcols(swee), by.x='ENSEMBL', by.y='gene_id_trimmed', all=FALSE)
+
+plotMASwish(swee, alpha=.05, xlim=c(.5,5.5))
+with(
+  subset(gene_id_lookup, qvalue < .05 & abs(log2FC) > 4),
+     text(log10mean, log2FC, SYMBOL,
+          col="blue", pos=4, cex=.7)
+)
 ```{r sessioninfo}
 sessionInfo()
 ```
