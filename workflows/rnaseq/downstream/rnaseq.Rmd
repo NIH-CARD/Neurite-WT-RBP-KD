@@ -128,12 +128,28 @@ lcdbwf:::plot_heatmap(vsd, colData, cols_for_grouping=config$plotting$covariates
 
 ## PCA {.tabset}
 
-```{r pca, results='asis', cache=TRUE, config=c(text$qc$pca, config$plotting$covariates_for_plots), dependson='dds_initial'}
+### WT {.tabset}
+
+```{r pca_2, results='asis', cache=TRUE, config=c(text$qc$pca, config$plotting$covariates_for_plots), dependson='dds_initial'}
 # Plot PCA plots, optionally tabbed with different factors colored, for QC.
 lcdbwf:::mdcat(text$qc$pca)
+
 for(group in config$plotting$covariates_for_plots){
-    lcdbwf:::mdcat('### ', paste(group, sep=", "))
+    lcdbwf:::mdcat('#### ', paste(group, sep=", "))
     p <- lcdbwf:::plotPCA.ly(vsd, intgroup=group)
+    print(htmltools::tagList(ggplotly(p)))
+}
+```
+
+### NO WT {.tabset}
+
+```{r pca, results='asis', cache=TRUE, config=c(text$qc$pca, config$plotting$covariates_for_plots), dependson='dds_initial'}
+# Plot PCA plots, optionally tabbed with different factors colored, for QC.
+vsd_no_wt <- vsd[,vsd$group != 'WT']
+#lcdbwf:::mdcat('#### NO WT')
+for(group in config$plotting$covariates_for_plots){
+    lcdbwf:::mdcat('#### ', paste(group, sep=", "))
+    p <- lcdbwf:::plotPCA.ly(vsd_no_wt, intgroup=group)
     print(htmltools::tagList(ggplotly(p)))
 }
 ```
@@ -157,34 +173,33 @@ ggplotly(p)
 #
 # May need substantial editing.
 lst <- list(
-            # ------------------------------------------------------------------
             # NOTE: Delete these for real data!
             # They are just examples to demonstrate functionality.
             #
             # Example 1: simplest case
             main=list(
                 sampletable=colData,
-                design=~group),
+                design=~full_guide_grp)
 
             # Example 2: demonstrates how to filter samples.
             # Note that subset.counts=TRUE is required when filtering.
-            no_rep4=list(
-                sampletable=colData %>% filter(samplename != 'sample4'),
-                design=~group,
-                subset_counts=TRUE
-            ),
+            #no_rep4=list(
+            #    sampletable=colData %>% filter(samplename != 'sample4'),
+            #    design=~group,
+            #    subset_counts=TRUE
+            #),
 
             # Example 3: use salmon
-            salmon=list(
-                sampletable=colData,
-                design=~group,
-                salmon=TRUE),
+            #salmon=list(
+            #    sampletable=colData,
+            #    design=~full_guide_grp,
+             #   salmon=TRUE)
 
-            # Example 4: use kallisto
-            kallisto=list(
-                sampletable=colData,
-                design=~group,
-                kallisto=TRUE)
+           # # Example 4: use kallisto
+            #kallisto=list(
+            #    sampletable=colData,
+            #    design=~full_guide_grp,
+            #    kallisto=TRUE)
             # ------------------------------------------------------------------
           )
 dds_list <- map(lst, lcdbwf:::make_dds, config=config, parallel=config$parallel$parallel)
@@ -203,7 +218,7 @@ table below.
 Under the table are tabs, one for each contrast. Under each contrast's tab,
 there are more tabs for the various output.
 
-```{r results_01, dependson='dds_list', cache=TRUE}
+```{r results_00, dependson='dds_list', cache=TRUE, eval=FALSE}
 # Perform differential expression testing.
 #
 # ------------------------------------------------------------------------------
@@ -224,51 +239,395 @@ there are more tabs for the various output.
 #
 # Example 1:
 #  - demonstrates creating and manipulating coefficients
-control <- lcdbwf:::dds_coefs('main', group=='control')
-treatment <- lcdbwf:::dds_coefs('main', group=='treatment')
-contr_01_main <- lcdbwf:::make_results(
-  dds_name='main',
-  label='LFC>0',
-  contrast=treatment - control,
-  type='ashr'
+#control <- lcdbwf:::dds_coefs('main', group=='control')
+#treatment <- lcdbwf:::dds_coefs('main', group=='treatment')
+#contr_01_main <- lcdbwf:::make_results(
+#  dds_name='main',
+ # label='LFC>0',
+ # contrast=treatment - control,
+ # type='ashr'
+#)
+```
+
+```{r results_01, dependson='dds_list', cache=TRUE}
+contr_01afa_lfc0_WTWT_fc <- lcdbwf:::make_results(
+  dds_name="main",
+  contrast=c("full_guide_grp", "WT_S", "WT_N"),
+  #lfcThreshold=1,
+  type="ashr",
+  label="Soma-- Neurite WT lfc >0 FeatureC"
 )
 ```
 
-```{r results_02, dependson='dds_list', cache=TRUE}
-# Example 2:
-#  - demonstrates using a log2FoldChange threshold
-contr_02_lfc1 <- lcdbwf:::make_results(
-  dds_name="no_rep4",
-  contrast=c("group", "treatment", "control"),
+```{r results_011, dependson='dds_list', cache=TRUE}
+contr_01afa_lfc1_WTWT_fc <- lcdbwf:::make_results(
+  dds_name="main",
+  contrast=c("full_guide_grp", "WT_S", "WT_N"),
   lfcThreshold=1,
   type="ashr",
-  label="No rep 4 and using log2FoldChange of >1"
+  label="Soma-- Neurite WT lfc >1 FeatureC"
+)
+```
+
+```{r results_02, dependson='dds_list', cache=TRUE, eval=FALSE}
+contr_01af_lfc0_WTWT_sal <- lcdbwf:::make_results(
+  dds_name="salmon",
+  contrast=c("full_guide_grp", "WT_S", "WT_N"),
+  type="ashr",
+  label="Soma -- Neurite WT lfc >0 Salmon"
 )
 ```
 
 ```{r results_03, dependson='dds_list', cache=TRUE}
-# Example 3:
-#   - demonstrates using normal shrinkage
-#   - demonstrates how to use salmon
-contr_03a_salmon <- lcdbwf:::make_results(
-  dds_name="salmon",
-  contrast=c("group", "treatment", "control"),
-  type="normal",
-  label="Using Salmon"
+# main contrasts first, then salmon and kallisto
+contr_02af_sg100_SN_TDP <- lcdbwf:::make_results(
+  dds_name="main",
+  contrast=c('full_guide_grp', 'sg100_S_TDP43kd', 'sg100_N_TDP43kd'),
+  type='ashr',
+  label='NT Soma -- Neurite TDP43kd lfc > 0 FeatureC'
+)
+```
+
+```{r results_031, dependson='dds_list', cache=TRUE}
+# main contrasts first, then salmon and kallisto
+contr_02af_sg100_SN_TDP_lfc1 <- lcdbwf:::make_results(
+  dds_name="main",
+  contrast=c('full_guide_grp', 'sg100_S_TDP43kd', 'sg100_N_TDP43kd'),
+  type='ashr',
+  lfcTheshold=1,
+  label='NT Soma -- Neurite TDP43kd lfc > 1 FeatureC'
 )
 ```
 
 ```{r results_04, dependson='dds_list', cache=TRUE}
-# Example 4:
-#   - like example 3, but kallisto instead of salmon
-contr_03_kallisto <- lcdbwf:::make_results(
-  dds_name="kallisto",
-  contrast=c('group', 'treatment', 'control'),
-  type='normal',
-  label='Using Kallisto'
+# main contrasts first, then salmon and kallisto
+contr_02bf_200NTSS_TDP_lfc0 <- lcdbwf:::make_results(
+  dds_name="main",
+  contrast=c('full_guide_grp', 'sg200_S_TDP43kd', 'sg100_S_TDP43kd'),
+  type='ashr',
+  label='sg200 Soma -- NT Soma TDP43kd lfc > 0 FeatureC'
 )
 ```
 
+```{r results_041, dependson='dds_list', cache=TRUE}
+# main contrasts first, then salmon and kallisto
+contr_02bf_200NTSS_TDP_lfc1 <- lcdbwf:::make_results(
+  dds_name="main",
+  contrast=c('full_guide_grp', 'sg200_S_TDP43kd', 'sg100_S_TDP43kd'),
+  type='ashr',
+  lfcThreshold=1,
+  label='sg200 Soma -- NT Soma TDP43kd lfc > 1 FeatureC'
+)
+```
+
+```{r results_05, dependson='dds_list', cache=TRUE}
+# main contrasts first, then salmon and kallisto
+contr_02cf_200NT_NN_TDP_lfc0 <- lcdbwf:::make_results(
+  dds_name="main",
+  contrast=c('full_guide_grp', 'sg200_N_TDP43kd', 'sg100_N_TDP43kd'),
+  type='ashr',
+  label='sg200 Neurite -- NT Neurite TDP43kd lfc > 0 FeatureC'
+)
+```
+
+```{r results_051, dependson='dds_list', cache=TRUE}
+# main contrasts first, then salmon and kallisto
+contr_02cf_200NT_NN_TDP_lfc1 <- lcdbwf:::make_results(
+  dds_name="main",
+  contrast=c('full_guide_grp', 'sg200_N_TDP43kd', 'sg100_N_TDP43kd'),
+  type='ashr',
+  lfcThreshold=1,
+  label='sg200 Neurite -- NT Neurite TDP43kd lfc > 1 FeatureC'
+)
+```
+
+```{r results_06, dependson='dds_list', cache=TRUE}
+# main contrasts first, then salmon and kallisto
+contr_03af_NTNT_SN_FUS_lfc0 <- lcdbwf:::make_results(
+  dds_name="main",
+  contrast=c('full_guide_grp', 'sg100_S_FUSkd', 'sg100_N_FUSkd'),
+  type='ashr',
+  label='sg100 Soma -- Neurite FUSkd lfc > 0 FeatureC'
+)
+```
+
+```{r results_061, dependson='dds_list', cache=TRUE}
+# main contrasts first, then salmon and kallisto
+contr_03af_NTNT_SN_FUS_lfc1 <- lcdbwf:::make_results(
+  dds_name="main",
+  contrast=c('full_guide_grp', 'sg100_S_FUSkd', 'sg100_N_FUSkd'),
+  type='ashr',
+  lfcThreshold=1,
+  label='sg100 Soma -- Neurite FUSkd lfc > 1 FeatureC'
+)
+```
+
+```{r results_07, dependson='dds_list', cache=TRUE}
+# main contrasts first, then salmon and kallisto
+contr_03bf_1152NT_SS_FUS_lfc0 <- lcdbwf:::make_results(
+  dds_name="main",
+  contrast=c('full_guide_grp', 'sg1152_S_FUSkd', 'sg100_S_FUSkd'),
+  type='ashr',
+  label='sg1152 Soma -- NT Soma FUSkd lfc > 0 FeatureC'
+)
+```
+
+```{r results_071, dependson='dds_list', cache=TRUE}
+# main contrasts first, then salmon and kallisto
+contr_03bf_1152_SS_FUS_lfc1 <- lcdbwf:::make_results(
+  dds_name="main",
+  contrast=c('full_guide_grp', 'sg1152_S_FUSkd', 'sg100_S_FUSkd'),
+  type='ashr',
+  lfcThreshold=1,
+  label='sg1152 Soma -- NT Soma FUSkd lfc > 1 FeatureC'
+)
+```
+
+```{r results_08, dependson='dds_list', cache=TRUE}
+# main contrasts first, then salmon and kallisto
+contr_03cf_1152NT_NN_FUS_lfc0 <- lcdbwf:::make_results(
+  dds_name="main",
+  contrast=c('full_guide_grp', 'sg1152_N_FUSkd', 'sg100_N_FUSkd'),
+  type='ashr',
+  label='sg1152 Neurite -- NT Neurite FUSkd lfc > 0 FeatureC'
+)
+```
+
+```{r results_081, dependson='dds_list', cache=TRUE}
+# main contrasts first, then salmon and kallisto
+contr_03cf_1152NT_NN_FUS_lfc1 <- lcdbwf:::make_results(
+  dds_name="main",
+  contrast=c('full_guide_grp', 'sg1152_N_FUSkd', 'sg100_N_FUSkd'),
+  type='ashr',
+  lfcThreshold=1,
+  label='sg1152 Neurite -- NT Neurite FUSkd lfc > 1 FeatureC'
+)
+```
+
+```{r results_09, dependson='dds_list', cache=TRUE}
+# main contrasts first, then salmon and kallisto
+contr_04af_1126_SN_HNRN_lfc0 <- lcdbwf:::make_results(
+  dds_name="main",
+  contrast=c('full_guide_grp', 'sg1126_S_HNRNPA1kd', 'sg1126_N_HNRNPA1kd'),
+  type='ashr',
+  label='sg1126 Soma -- Neurite HNRNPA1kd lfc > 0 FeatureC'
+)
+```
+
+```{r results_09_1, dependson='dds_list', cache=TRUE}
+# main contrasts first, then salmon and kallisto
+contr_04af_1126_SN_HNRN_lfc1 <- lcdbwf:::make_results(
+  dds_name="main",
+  contrast=c('full_guide_grp', 'sg1126_S_HNRNPA1kd', 'sg1126_N_HNRNPA1kd'),
+  type='ashr',
+  lfcThreshold=1,
+  label='sg1126 Soma -- Neurite HNRNPA1kd lfc > 1 FeatureC'
+)
+```
+
+```{r results_10, dependson='dds_list', cache=TRUE}
+# main contrasts first, then salmon and kallisto
+contr_04bf_1128_1126_SS_HNRN_lfc0 <- lcdbwf:::make_results(
+  dds_name="main",
+  contrast=c('full_guide_grp', 'sg1128_S_HNRNPA1kd', 'sg1126_S_HNRNPA1kd'),
+  type='ashr',
+  label='sg1128 Soma -- sg1126 Soma HNRNPA1kd lfc > 0 FeatureC'
+)
+```
+
+```{r results_10_1, dependson='dds_list', cache=TRUE}
+# main contrasts first, then salmon and kallisto
+contr_04bf_1128_1126_SS_HNRN_lfc1 <- lcdbwf:::make_results(
+  dds_name="main",
+  contrast=c('full_guide_grp', 'sg1128_S_HNRNPA1kd', 'sg1126_S_HNRNPA1kd'),
+  type='ashr',
+  lfcThreshold=1,
+  label='sg1128 Soma -- sg1126 Soma HNRNPA1kd lfc > 1 FeatureC'
+)
+```
+
+```{r results_11, dependson='dds_list', cache=TRUE}
+# main contrasts first, then salmon and kallisto
+contr_04cf_1128_1126_NN_HNRN_lfc0 <- lcdbwf:::make_results(
+  dds_name="main",
+  contrast=c('full_guide_grp', 'sg1128_N_HNRNPA1kd', 'sg1126_N_HNRNPA1kd'),
+  type='ashr',
+  label='sg1128 Neurite -- sg1126 Neurite HNRNPA1kd lfc > 0 FeatureC'
+)
+```
+
+```{r results_11_1, dependson='dds_list', cache=TRUE}
+# main contrasts first, then salmon and kallisto
+contr_04cf_1128_1126_NN_HNRN_lfc1 <- lcdbwf:::make_results(
+  dds_name="main",
+  contrast=c('full_guide_grp', 'sg1128_N_HNRNPA1kd', 'sg1126_N_HNRNPA1kd'),
+  type='ashr',
+  lfcThreshold=1,
+  label='sg1128 Neurite -- sg1126 Neurite HNRNPA1kd lfc > 1 FeatureC'
+)
+```
+
+```{r results_12, dependson='dds_list', cache=TRUE, eval=FALSE}
+contr_02as_jlfc0 <- lcdbwf:::make_results(
+  dds_name="salmon",
+  contrast=c('full_guide_grp', 'sg100_S_TDP43kd', 'sg100_N_TDP43kd'),
+  type='ashr',
+  label='sg100 Soma -- Neurite TDP43kd lfc > 0 Salmon'
+)
+```
+
+```{r results_13, dependson='dds_list', cache=TRUE, eval=FALSE}
+contr_02bs_klfc0 <- lcdbwf:::make_results(
+  dds_name="salmon",
+  contrast=c('full_guide_grp', 'sg200_S_TDP43kd', 'sg100_S_TDP43kd'),
+  type='ashr',
+  label='sg200 Soma -- sg100 Soma TDP43kd lfc > 0 Salmon'
+)
+```
+
+```{r results_14, dependson='dds_list', cache=TRUE, eval=FALSE}
+contr_02cs_lfc0 <- lcdbwf:::make_results(
+  dds_name="salmon",
+  contrast=c('full_guide_grp', 'sg200_N_TDP43kd', 'sg100_N_TDP43kd'),
+  type='ashr',
+  label='sg200 Neurite -- sg100 Neurite TDP43kd lfc > 0 Salmon'
+)
+```
+
+```{r results_15, dependson='dds_list', cache=TRUE, eval=FALSE}
+contr_03as_lfc0 <- lcdbwf:::make_results(
+  dds_name="salmon",
+  contrast=c('full_guide_grp', 'sg100_S_FUSkd', 'sg100_N_FUSkd'),
+  type='ashr',
+  label='sg100 Soma -- Neurite FUSkd lfc > 0 Salmon'
+)
+```
+
+```{r results_16, dependson='dds_list', cache=TRUE, eval=FALSE}
+contr_03bs_lfc0 <- lcdbwf:::make_results(
+  dds_name="salmon",
+  contrast=c('full_guide_grp', 'sg1152_S_FUSkd', 'sg100_S_FUSkd'),
+  type='ashr',
+  label='sg1152 Soma -- sg100 Soma FUSkd lfc > 0 Salmon'
+)
+```
+
+```{r results_17, dependson='dds_list', cache=TRUE, eval=FALSE}
+contr_03cs_lfc0 <- lcdbwf:::make_results(
+  dds_name="salmon",
+  contrast=c('full_guide_grp', 'sg1152_N_FUSkd', 'sg100_N_FUSkd'),
+  type='ashr',
+  label='sg1152 Neurite -- sg100 Neurite FUSkd lfc > 0 Salmon'
+)
+```
+
+```{r results_18, dependson='dds_list', cache=TRUE, eval=FALSE}
+contr_04as_lfc0 <- lcdbwf:::make_results(
+  dds_name="salmon",
+  contrast=c('full_guide_grp', 'sg1126_S_HNRNPA1kd', 'sg1126_N_HNRNPA1kd'),
+  type='ashr',
+  label='sg1126 Soma -- Neurite HNRNPA1kd lfc > 0 Salmon'
+)
+```
+
+```{r results_19, dependson='dds_list', cache=TRUE, eval=FALSE}
+contr_04bs_lfc0 <- lcdbwf:::make_results(
+  dds_name="salmon",
+  contrast=c('full_guide_grp', 'sg1128_S_HNRNPA1kd', 'sg1126_S_HNRNPA1kd'),
+  type='ashr',
+  label='sg1128 Soma -- sg1126 Soma HNRNPA1kd lfc > 0 Salmon'
+)
+```
+
+```{r results_20, dependson='dds_list', cache=TRUE, eval=FALSE}
+contr_04cs_lfc0 <- lcdbwf:::make_results(
+  dds_name="salmon",
+  contrast=c('full_guide_grp', 'sg1128_N_HNRNPA1kd', 'sg1126_N_HNRNPA1kd'),
+  type='ashr',
+  label='sg1128 Neurite -- sg1126 Neurite HNRNPA1kd lfc > 0 Salmon'
+)
+```
+
+```{r results_21, dependson='dds_list', cache=TRUE, eval=FALSE}
+contr_02ak_lfc0 <- lcdbwf:::make_results(
+  dds_name="kallisto",
+  contrast=c('full_guide_grp', 'sg100_S_TDP43kd', 'sg100_N_TDP43kd'),
+  type='ashr',
+  label='sg100 Soma -- Neurite TDP43kd lfc > 0 kallisto'
+)
+```
+
+```{r results_22, dependson='dds_list', cache=TRUE, eval=FALSE}
+contr_02bk_lfc0 <- lcdbwf:::make_results(
+  dds_name="kallisto",
+  contrast=c('full_guide_grp', 'sg200_S_TDP43kd', 'sg100_S_TDP43kd'),
+  type='ashr',
+  label='sg200 Soma -- sg100 Soma TDP43kd lfc > 0 kallisto'
+)
+```
+
+```{r results_23, dependson='dds_list', cache=TRUE, eval=FALSE}
+contr_02ck_lfc0 <- lcdbwf:::make_results(
+  dds_name="kallisto",
+  contrast=c('full_guide_grp', 'sg200_N_TDP43kd', 'sg100_N_TDP43kd'),
+  type='ashr',
+  label='sg200 Neurite -- sg100 Neurite TDP43kd lfc > 0 kallisto'
+)
+```
+
+```{r results_24, dependson='dds_list', cache=TRUE, eval=FALSE}
+contr_03ak_lfc0 <- lcdbwf:::make_results(
+  dds_name="kallisto",
+  contrast=c('full_guide_grp', 'sg100_S_FUSkd', 'sg100_N_FUSkd'),
+  type='ashr',
+  label='sg100 Soma -- Neurite FUSkd lfc > 0 kallisto'
+)
+```
+
+```{r results_25, dependson='dds_list', cache=TRUE, eval=FALSE}
+contr_03bk_lfc0 <- lcdbwf:::make_results(
+  dds_name="kallisto",
+  contrast=c('full_guide_grp', 'sg1152_S_FUSkd', 'sg100_S_FUSkd'),
+  type='ashr',
+  label='sg1152 Soma -- sg100 Soma FUSkd lfc > 0 kallisto'
+)
+```
+
+```{r results_26, dependson='dds_list', cache=TRUE, eval=FALSE}
+contr_03ck_lfc0 <- lcdbwf:::make_results(
+  dds_name="kallisto",
+  contrast=c('full_guide_grp', 'sg1152_N_FUSkd', 'sg100_N_FUSkd'),
+  type='ashr',
+  label='sg1152 Neurite -- sg100 Neurite FUSkd lfc > 0 kallisto'
+)
+```
+
+```{r results_27, dependson='dds_list', cache=TRUE, eval=FALSE}
+contr_04ak_lfc0 <- lcdbwf:::make_results(
+  dds_name="kallisto",
+  contrast=c('full_guide_grp', 'sg1126_S_HNRNPA1kd', 'sg1126_N_HNRNPA1kd'),
+  type='ashr',
+  label='sg1126 Soma -- Neurite HNRNPA1kd lfc > 0 kallisto'
+)
+```
+
+```{r results_28, dependson='dds_list', cache=TRUE, eval=FALSE}
+contr_04bk_lfc0 <- lcdbwf:::make_results(
+  dds_name="kallisto",
+  contrast=c('full_guide_grp', 'sg1128_S_HNRNPA1kd', 'sg1126_S_HNRNPA1kd'),
+  type='ashr',
+  label='sg1128 Soma -- sg1126 Soma HNRNPA1kd lfc > 0 kallisto'
+)
+```
+
+```{r results_29, dependson='dds_list', cache=TRUE, eval=FALSE}
+contr_04ck_lfc0 <- lcdbwf:::make_results(
+  dds_name="kallisto",
+  contrast=c('full_guide_grp', 'sg1128_N_HNRNPA1kd', 'sg1126_N_HNRNPA1kd'),
+  type='ashr',
+  label='sg1128 Neurite -- sg1126 Neurite HNRNPA1kd lfc > 0 kallisto'
+)
+```
 
 ```{r assemble_variables, cache=TRUE, config=config$annotation, dependson=knitr::all_labels()[grepl("^results_", knitr::all_labels())]}
 res_list <- lcdbwf:::collect_objects("^contr_[^_]+_")

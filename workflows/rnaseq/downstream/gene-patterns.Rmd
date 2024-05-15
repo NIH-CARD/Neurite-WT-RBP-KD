@@ -91,7 +91,7 @@ cutoff <- 0.5
 
 # NOTE: x-axis for degPatterns ------------------------------------------------
 #   Should be a column in the colData metadata
-time <- "group"
+time <- "full_guide_grp"
 
 # NOTE: color for degPatterns.------------------------------------------------
 #   Use NULL for no color.
@@ -100,7 +100,7 @@ col <- NULL
 # NOTE: This is set very low for test data. Default is 15.---------------------
 #   Minimum cluster size.
 # minc <- 1  # [ TEST SETTINGS +1 ]
-minc <- 15
+minc <- 8
 
 # NOTE: This is a very low value used for getting the degPatterns to run -----
 low.minc <- 1
@@ -136,6 +136,7 @@ n.list <- list()
 # list to store degpatterns objects
 degpatterns_list <- list()
 
+ll <- ll[- c(12, 15,19,21)]
 for (name in names(ll)){
     # Print a nice Markdown header
     if (name == 'union_all_contrasts') {
