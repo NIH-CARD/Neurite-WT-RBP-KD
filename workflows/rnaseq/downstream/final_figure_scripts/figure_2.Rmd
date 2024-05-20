@@ -131,14 +131,10 @@ ya <- DESeqDataSet(y, design = ~1)
 vsd <- varianceStabilizingTransformation(ya, blind=TRUE)
 
 
-# Make new column for targeting vs nontargeting guide
-colData(vsd)$targeting <- case_match(colData(vsd)$guide_group, 
-                                     c('sg100', 'sg1126') ~ 'non-targeting',
-                                     c('sg200', 'sg1152', 'sg1128') ~ 'targeting',
-                                     'WT' ~ 'WT',
-                                     )
 
 
+# set non-targeting as the reference level
+colData(vsd)$targeting <- factor(colData(vsd)$targeting ,levels=c('non-targeting', 'targeting'))
 ```
 
 ```{r PCA,config=c(config$main, config$toggle$salmon, config$toggle$kallisto)}
