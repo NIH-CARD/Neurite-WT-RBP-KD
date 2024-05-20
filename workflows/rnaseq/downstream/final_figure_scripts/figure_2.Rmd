@@ -172,7 +172,7 @@ ggsave(paste0("PCA_plots/", variable, "figure_2_pca_",first_PC, "_", second_PC, 
 
 ```
 
-```{r swish,config=c(config$main, config$toggle$salmon, config$toggle$kallisto)}
+```{r swish, cache=TRUE, config=c(config$main, config$toggle$salmon, config$toggle$kallisto), dependson=c('PCA', 'tximeta_setup', 'dds_initial')}
 
 library(fishpond)
 library(tibble)
@@ -220,6 +220,7 @@ with(
      text(log10mean, log2FC, SYMBOL,
           col="blue", pos=4, cex=.7)
 )
+```{r MAplot, cache=TRUE, config=c(config$main, config$toggle$salmon, config$toggle$kallisto), dependson=c('swish', 'tximeta_setup','dds_initial')}
 ```{r sessioninfo}
 sessionInfo()
 ```
