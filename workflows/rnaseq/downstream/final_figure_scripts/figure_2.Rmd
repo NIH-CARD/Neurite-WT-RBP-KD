@@ -111,7 +111,7 @@ dt_colData[, files:= paste0(salmon_dir, bio_group, '.salmon/quant.sf')]
 dt_colData_WT <- dt_colData[full_guide_grp %in% c(neurite_contrast, soma_contrast),]
 
 # Set conditions for this round
-dt_colData_WT$cellular_zone <- factor(dt_colData_WT$full_guide_grp ,levels=c(neurite_contrast, soma_contrast))
+dt_colData_WT$cellular_zone <- factor(dt_colData_WT$full_guide_grp ,levels=c(soma_contrast, neurite_contrast))
 ```
 
 ```{r tximeta_setup, cache=TRUE, depends='dds_initial', config=c(config$main, config$toggle$salmon, config$toggle$kallisto)}
