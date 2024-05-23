@@ -129,12 +129,6 @@ library(dplyr)
 
 ya <- DESeqDataSet(y, design = ~1)
 vsd <- varianceStabilizingTransformation(ya, blind=TRUE)
-
-
-
-
-# set non-targeting as the reference level
-colData(vsd)$targeting <- factor(colData(vsd)$targeting ,levels=c('non-targeting', 'targeting'))
 ```
 
 ```{r PCA,config=c(config$main, config$toggle$salmon, config$toggle$kallisto)}
@@ -222,7 +216,50 @@ with(
      text(log10mean, log2FC, SYMBOL,
           col="blue", pos=4, cex=.7)
 )
-```{r MAplot, cache=TRUE, config=c(config$main, config$toggle$salmon, config$toggle$kallisto), dependson=c('swish', 'tximeta_setup','dds_initial')}
+
+```{r maplot,cache=TRUE,config=c(config$main, config$toggle$salmon, config$toggle$kallisto), dependson=c('swish', 'tximeta_setup','dds_initial')}
+library(ggpubr)
+library(tidyverse)
+
+# Rename columns for this
+ma_plot_data <- gene_id_lookup
+names(ma_plot_data)[names(ma_plot_data) == "log10mean"] <- "baseMean"             
+names(ma_plot_data)[names(ma_plot_data) == "log2FC"] <- "log2FoldChange"             
+# q value are essentially adjusted p values
+# https://www.nonlinear.com/progenesis/qi-for-proteomics/v4.2/faq/pq-values.aspx
+names(ma_plot_data)[names(ma_plot_data) == "qvalue"] <- "padj"             
+
+# Convert from log10 to normalized 
+ma_plot_data['baseMean'] = lapply(ma_plot_data['baseMean'], function(x) {
+   x <- 10 ** x
+   return(x)
+})
+
+# Replace any empty SYMBOLS
+ma_plot_data$SYMBOL[ma_plot_data$SYMBOL == ""] <- ma_plot_data$ENSEMBL[ma_plot_data$SYMBOL == ""]
+
+ggmaplot(ma_plot_data,  main = expression("S3 Neurite / S3 Soma"), 
+    fc=1.5, 
+    fdr=0.05, 
+    genenames=as.vector(ma_plot_data$SYMBOL),
+   palette = c("#B31B21", "#1465AC", "darkgray"),
+   top = 20,
+   font.label = c("bold", 12), label.rectangle=TRUE,
+   font.legend = c(size=14, "bold"),
+   font.x = c(size=14, "bold"),
+   font.y = c(size=14, "bold"),
+   font.main = c(size = 20, "bold"),
+   font.tickslab = c(size=14),
+   ggtheme = ggplot2::theme_minimal(),
+   size=0.5
+)
+
+relevant_data <- ma_plot_data[ma_plot_data$padj < 0.05,]
+relevant_data <- ma_plot_data[ma_plot_data$log2FoldChange < 1,]
+relevant_data <- relevant_data['ENSEMBL']
+write.csv(relevant_data, paste0("diff_f0r_GI", contrast_name, ".csv"), quote=FALSE, row.names=FALSE)
+```
+
 ```{r sessioninfo}
 sessionInfo()
 ```
