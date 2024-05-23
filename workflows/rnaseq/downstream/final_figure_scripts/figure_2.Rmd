@@ -167,7 +167,7 @@ p <- ggplot(data=mat,aes_string(x = first_PC, y = second_PC, color = color_var))
 geom_point(size=3) + xlab(paste0(first_PC,': ', round(pv[1]*100), '% variance')) +
           ylab(paste0(second_PC,': ', round(pv[2]*100), '% variance')) + coord_fixed() +
           ggtitle(paste0(first_PC, " and ", second_PC, " WT samples by cellular zone"))
-ggsave(paste0("PCA_plots/", variable, "figure_2_pca_",first_PC, "_", second_PC, "_only_WT.pdf"), plot=p)
+ggsave(paste0("Publication_PCA_plots/", variable, "figure_2_pca_",first_PC, "_", second_PC, "_only_WT.pdf"), plot=p)
 
 
 ```
@@ -198,6 +198,8 @@ write.csv(sign_out, paste0("diff_tran", contrast_name, ".csv"), quote=FALSE, row
 alpha <- 0.05
 
 # Create volcano plot
+# Because of the way swish does statistics a weird volcano plot is expected
+# Use an MA plot instead, it has more information anyway
 volcano <- ggplot(sign_tran, aes(x = log2FC, y = -log10(qvalue))) +
   geom_point(color = ifelse(sign_tran$qvalue < alpha, "red", "black"), size = 2) +
   geom_hline(yintercept = -log10(alpha), linetype = "dashed", color = "blue") +
