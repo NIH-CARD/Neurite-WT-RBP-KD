@@ -108,10 +108,10 @@ dt_colData <- dt_colData[!duplicated(dt_colData, by="bio_group")]
 # Add salmon file paths
 dt_colData[, files:= paste0(salmon_dir, bio_group, '.salmon/quant.sf')]
 
-dt_colData_WT <- dt_colData[full_guide_grp %in% c(neurite_contrast, soma_contrast),]
+dt_colData_WT <- dt_colData[full_guide_grp %in% c(soma_contrast, neurite_contrast),]
 
 # Set conditions for this round
-dt_colData_WT$condition <- factor(dt_colData_WT$full_guide_grp ,levels=c(neurite_contrast, soma_contrast))
+dt_colData_WT$condition <- factor(dt_colData_WT$full_guide_grp ,levels=c(soma_contrast, neurite_contrast))
 
 # Just like lcdb_wf ignore the version number
 se <- tximeta(dt_colData_WT, ignoreTxVersion=TRUE, txOut=TRUE)

@@ -8,9 +8,9 @@ output:
         toc_depth: 3
 params:
     contrast_name: ''
-    target: ''
     targeting: ''
     nontargeting: ''
+    base_folder: ''
 ---
 
 ```{r global_options, include=FALSE}
@@ -31,7 +31,6 @@ knitr::opts_chunk$set(
 # This package has many custom functions used throughout this document.
 devtools::document('../../../lib/lcdbwf')
 devtools::load_all('../../../lib/lcdbwf')
-library(dplyr)
 ```
 
 
@@ -57,10 +56,13 @@ text <- yaml::yaml.load_file('text.yaml')
 
 # Initialixe ags 
 contrast_name <- params$contrast_name
-target <- params$target
-targeting_guide <- params$targeting
-nontargeting_guide <- params$nontargeting
-base_folder <- "transite_logfc_targeting_nontargeting_interaction_results/"
+targeting <- params$targeting
+nontargeting <- params$nontargeting
+base_folder <- "final_figures/figure_4/"
+
+contrast_name <- 'TDP43_N_sg200_vs_sg100'
+targeting <- 'sg200_N_TDP43kd'
+nontargeting <- 'sg100_N_TDP43kd'
 ```
 
 
@@ -107,38 +109,19 @@ salmon_dir <- '/data/CARD_ARDIS/2023_07_21_veronica_analysis/workflows/rnaseq/da
 dt_colData <- setDT(colData)
 dt_colData[, names:=bio_group]
 
-# MAke targeting vs nontargeting
-dt_colData$targeting <- case_match(dt_colData$guide_group,
-                                                c('sg100', 'sg1126') ~ 'non-targeting',
-                                                c('sg200', 'sg1152', 'sg1128') ~ 'targeting',
-                                                'WT' ~ 'WT',
-                                                )
 
-# Remove lane two rows since we already collapsed by bio_group when making salm,ton files
+# Remove lane two rows since we already collapsed by bio_group when making salmon files
 dt_colData <- dt_colData[!duplicated(dt_colData, by="bio_group")]
 # Add salmon file paths
 dt_colData[, files:= paste0(salmon_dir, bio_group, '.salmon/quant.sf')]
 
-# Remove TDP43
-# If we're dealing with  sg200_N_TDP43kd_13_B2 get rid of it
-# for the interaction analysis
-dt_colData_sub <- subset(dt_colData, sample != 'sg200_N_TDP43kd_13_B2')
-# Remove WT
-dt_colData_sub <- subset(dt_colData_sub, guide_group != 'WT')
-
+dt_colData_WT <- dt_colData[full_guide_grp %in% c(targeting, nontargeting),]
 
 # Set conditions for this round
-levels(dt_colData_sub$targeting) <- c('targeting','non-targeting')
-dt_colData_sub$zone <- factor(dt_colData_sub$zone ,levels=c('N','S'))
-
-# Rename sg100 for FUS
-# dt_colData
-
-# Eclude targeting guides taht are not in HNRN or FUS
-dt_colData_sub_TDP <- dt_colData_sub[ !((targeting == "targeting") & (group %in% c("FUSkd", "HNRNPA1kd"))),]
+dt_colData_WT$condition <- factor(dt_colData_WT$full_guide_grp ,levels=c(nontargeting,targeting))
 
 # Just like lcdb_wf ignore the version number
-se <- tximeta(dt_colData_sub, ignoreTxVersion=TRUE, txOut=TRUE)
+se <- tximeta(dt_colData_WT, ignoreTxVersion=TRUE, txOut=TRUE)
 
 # library(org.Hs.eg.db)
 # se <- addIds(se,"REFSEQ",gene=FALSE)
@@ -146,19 +129,64 @@ se <- tximeta(dt_colData_sub, ignoreTxVersion=TRUE, txOut=TRUE)
 # Rename for the statistical portion
 y <- se
 
+```
 
+```{r PCA,config=c(config$main, config$toggle$salmon, config$toggle$kallisto)}
+library(DESeq2)
+library(ggplot2)
+library(dplyr)
+
+ya <- DESeqDataSet(y, design = ~1)
+vsd <- varianceStabilizingTransformation(ya, blind=TRUE)
+
+colData(vsd)$targeting <- case_match(colData(vsd)$guide_group, 
+                                     c('sg100', 'sg1126') ~ 'non-targeting',
+                                     c('sg200', 'sg1152', 'sg1128') ~ 'targeting',
+                                     'WT' ~ 'WT',
+                                     )
+
+#PCA without correction
+pca_matrix<- as.data.frame(assay(vsd)) %>%
+    base::as.matrix() %>%
+    t()
+sample_pca <- prcomp(pca_matrix)
+
+# HAven't satandarzied yet
+pc_scores <- sample_pca$x %>% as_tibble(rownames="sample")
+
+# Change variables in order to generate PCA plots
+variable <- c('targeting')
+PC1 <- 1
+PC2 <- 2
+first_PC <- paste0('PC', PC1)
+second_PC <- paste0('PC', PC2)
+color_var <- if(variable == 'group') 'group.1' else variable # group is similar to the internal var
+
+pc_metadata <- inner_join(pc_scores, dt_colData_WT, join_by(sample == names))
+
+mat <- DESeq2::plotPCA(vsd, c(variable, 'targeting'), pcsToUse=PC1:PC2, returnData=TRUE)
+
+pv <- attr(mat, 'percentVar')
+
+p <- ggplot(data=mat,aes_string(x = first_PC, y = second_PC, color = color_var)) +
+    scale_shape_manual(values=c(4,16, 0)) +
+    geom_point(size=3) + xlab(paste0(first_PC,': ', round(pv[1]*100), '% variance')) +
+          ylab(paste0(second_PC,': ', round(pv[2]*100), '% variance')) + coord_fixed() +
+          ggtitle(paste0(first_PC, " and ", second_PC, " TDP 43 samples by cellular zone"))
+ggsave(paste0("Publication_PCA_plots/", variable, "figure_4_pca_",first_PC, "_", second_PC, "_TD43_KD.pdf"), plot=p)
+```
+
+
+```{r fishpond}
 library(fishpond)
 library(tibble)
 y <- scaleInfReps(y)
 y <- labelKeep(y)
 y <- y[mcols(y)$keep,]
 set.seed(1)
-# Looks like covariate is actually what we want plus interaction. The question is whether 
-# to use paired samples for the other things. It may be, if you follow closely, you will be able to
-# set up the pairing for this is as well if you choose.
-# # Mike Love gave his approval at https://support.bioconductor.org/p/9156147/#9156162
-y <- swish(y, x="zone", cov='targeting', pair="pair", interaction=TRUE)
+y <- swish(y, x="condition")
 
+# Get the rows with an FDR in the 5% level
 sign_tran <- y[mcols(y)$qvalue< 0.05]
 df <- mcols(y)
 df$tx_name <- rownames(df)
@@ -168,6 +196,11 @@ sign_tran <- sign_tran[sign_tran$qvalue < 0.05,]
 sign_tran <- dplyr::arrange(sign_tran, log2FC, locfdr)
 sign_out <- apply(sign_tran, 2, as.character)
 write.csv(sign_out, paste0(base_folder, "diff_tran", contrast_name, ".csv"), quote=FALSE, row.names=FALSE)
+```
+
+
+
+```{r transite}
 
 library(transite)
 
@@ -184,35 +217,36 @@ i[1:20,]
 
 # We'll try with cdna and 3'UTR, and maybe with full transcript which is transcript_exon_intron
 
-# Delete previous file if it is there
+# Just trying to get all of sign_tran
+rows <- nrow(sign_tran)
+
+# delete original file if already there
 transcripts_file <- paste0(base_folder, "transcripts_", contrast_name, ".csv")
 if (file.exists(transcripts_file)) {file.remove(transcripts_file)}
 
-# Just trying to get all of sign_tran
-rows <- nrow(sign_tran)
-tran1 <- sign_tran[0:2000,]
+tran1 <- sign_tran[1:2000,]
 subs <- gsub("\\..*","", tran1$tx_name)
-sequences_tei_1 <- getSequence(id=subs, mart=ensembl, seqType='transcript_exon_intron', type='ensembl_transcript_id', useCache=TRUE)
+sequences_tei_1 <- getSequence(id=subs, mart=ensembl, seqType='transcript_exon_intron', type='ensembl_transcript_id')
 write.table(sequences_tei_1, paste0(base_folder, "transcripts_",contrast_name,".csv"), quote=FALSE, sep=',', row.names=FALSE)
 tran2 <- sign_tran[2001:4000,]
 subs <- gsub("\\..*","", tran2$tx_name)
-sequences_tei_2 <- getSequence(id=subs, mart=ensembl, seqType='transcript_exon_intron', type='ensembl_transcript_id', useCache=TRUE)
+sequences_tei_2 <- getSequence(id=subs, mart=ensembl, seqType='transcript_exon_intron', type='ensembl_transcript_id')
 write.table(sequences_tei_2, paste0(base_folder, "transcripts_",contrast_name,".csv"), append=TRUE, quote=FALSE, sep=',', row.names=FALSE)
 tran3 <- sign_tran[4001:6000,]
 subs <- gsub("\\..*","", tran3$tx_name)
-sequences_tei_3 <- getSequence(id=subs, mart=ensembl, seqType='transcript_exon_intron', type='ensembl_transcript_id', useCache=TRUE)
+sequences_tei_3 <- getSequence(id=subs, mart=ensembl, seqType='transcript_exon_intron', type='ensembl_transcript_id')
 write.table(sequences_tei_3, paste0(base_folder, "transcripts_",contrast_name,".csv"), append=TRUE, quote=FALSE, sep=',', row.names=FALSE)
 tran4 <- sign_tran[6001:8000,]
 subs <- gsub("\\..*","", tran4$tx_name)
-sequences_tei_4 <- getSequence(id=subs, mart=ensembl, seqType='transcript_exon_intron', type='ensembl_transcript_id', useCache=TRUE)
+sequences_tei_4 <- getSequence(id=subs, mart=ensembl, seqType='transcript_exon_intron', type='ensembl_transcript_id')
 write.table(sequences_tei_4, paste0(base_folder, "transcripts_",contrast_name,".csv"), append=TRUE, quote=FALSE, sep=',', row.names=FALSE)
 tran5 <- sign_tran[8001:10000,]
 subs <- gsub("\\..*","", tran5$tx_name)
-sequences_tei_5 <- getSequence(id=subs, mart=ensembl, seqType='transcript_exon_intron', type='ensembl_transcript_id', useCache=TRUE)
+sequences_tei_5 <- getSequence(id=subs, mart=ensembl, seqType='transcript_exon_intron', type='ensembl_transcript_id')
 write.table(sequences_tei_5, paste0(base_folder, "transcripts_",contrast_name,".csv"), append=TRUE, quote=FALSE, sep=',', row.names=FALSE)
 tran6 <- sign_tran[10001:rows,]
 subs <- gsub("\\..*","", tran6$tx_name)
-sequences_tei_6 <- getSequence(id=subs, mart=ensembl, seqType='transcript_exon_intron', type='ensembl_transcript_id', useCache=TRUE)
+sequences_tei_6 <- getSequence(id=subs, mart=ensembl, seqType='transcript_exon_intron', type='ensembl_transcript_id')
 write.table(sequences_tei_6, paste0(base_folder, "transcripts_",contrast_name,".csv"), append=TRUE, quote=FALSE, sep=',', row.names=FALSE)
 
 library(readr)
@@ -237,9 +271,60 @@ seqs <- seqs[!grepl("N",seqs)]
 
 # Don't forget to set TMPDIR on the command line with some lscratch. Export TMPDIR=/lscratch/$SLURM_JOB_ID
 # # The real trick is to make sure there are no NA values
-result <- run_kmer_spma(seqs, sign_tran$log2FC,transcript_values_label="log2FC",n_cores=10, n_bins=40)
+result <- run_kmer_spma(seqs, sign_tran$log2FC,transcript_values_label="log2FC",n_cores=20)
 saveRDS(result, paste0(base_folder, contrast_name,".rds"))
 ```
+
+```{r maplot,cache=TRUE,config=c(config$main, config$toggle$salmon, config$toggle$kallisto), dependson=c('swish', 'tximeta_setup','dds_initial')}
+library(ggpubr)
+library(tidyverse)
+
+genedb <- fread('gene_table_GRCh38-2020-A.tsv')
+library(purrr)
+library(stringr)
+gene_ids_swee <- mcols(y)$gene_id
+mcols(y)$gene_id_trimmed <- sub("\\..*$", "", as.character(mcols(y)$gene_id))
+gene_id_lookup <- merge(genedb, mcols(y), by.x='ENSEMBL', by.y='gene_id_trimmed', all=FALSE)
+
+# Rename columns for this
+ma_plot_data <- gene_id_lookup
+names(ma_plot_data)[names(ma_plot_data) == "log10mean"] <- "baseMean"             
+names(ma_plot_data)[names(ma_plot_data) == "log2FC"] <- "log2FoldChange"             
+# q value are essentially adjusted p values
+# https://www.nonlinear.com/progenesis/qi-for-proteomics/v4.2/faq/pq-values.aspx
+names(ma_plot_data)[names(ma_plot_data) == "qvalue"] <- "padj"             
+
+# Convert from log10 to normalized 
+ma_plot_data['baseMean'] = lapply(ma_plot_data['baseMean'], function(x) {
+   x <- 10 ** x
+   return(x)
+})
+
+# Replace any empty SYMBOLS
+ma_plot_data$SYMBOL[ma_plot_data$SYMBOL == ""] <- ma_plot_data$ENSEMBL[ma_plot_data$SYMBOL == ""]
+
+ggmaplot(ma_plot_data,  main = expression("S3 Neurite / S3 Soma"), 
+    fc=1.5, 
+    fdr=0.05, 
+    genenames=as.vector(ma_plot_data$SYMBOL),
+   palette = c("#B31B21", "#1465AC", "darkgray"),
+   top = 20,
+   font.label = c("bold", 12), label.rectangle=TRUE,
+   font.legend = c(size=14, "bold"),
+   font.x = c(size=14, "bold"),
+   font.y = c(size=14, "bold"),
+   font.main = c(size = 20, "bold"),
+   font.tickslab = c(size=14),
+   ggtheme = ggplot2::theme_minimal(),
+   size=0.5
+)
+
+relevant_data <- ma_plot_data[ma_plot_data$padj < 0.05,]
+relevant_data <- ma_plot_data[ma_plot_data$log2FoldChange < 1,]
+relevant_data <- relevant_data['ENSEMBL']
+write.csv(relevant_data, paste0("diff_f0r_GI", contrast_name, ".csv"), quote=FALSE, row.names=FALSE)
+```
+
 
 # Session info
 For reproducibility purposes, here is the output of `sessionInfo()` showing the

@@ -121,7 +121,7 @@ dt_colData_sub <- dt_colData_sub[guide_group %in% guides,]
 dt_colData_sub <- subset(dt_colData_sub, sample != 'sg200_N_TDP43kd_13_B2')
 
 # Set conditions for this round
-dt_colData_sub$condition <- factor(dt_colData_sub$guide_group ,levels=c(targeting_guide,nontargeting_guide))
+dt_colData_sub$condition <- factor(dt_colData_sub$guide_group ,levels=c(nontargeting,targeting_guide))
 dt_colData_sub$zone <- factor(dt_colData_sub$zone ,levels=c('N','S'))
 
 # Just like lcdb_wf ignore the version number

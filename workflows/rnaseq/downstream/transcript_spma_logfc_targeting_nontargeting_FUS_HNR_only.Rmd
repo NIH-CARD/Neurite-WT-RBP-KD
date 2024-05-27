@@ -114,7 +114,7 @@ dt_colData[, files:= paste0(salmon_dir, bio_group, '.salmon/quant.sf')]
 dt_colData_WT <- dt_colData[full_guide_grp %in% c(targeting, nontargeting),]
 
 # Set conditions for this round
-dt_colData_WT$condition <- factor(dt_colData_WT$full_guide_grp ,levels=c(targeting,nontargeting))
+dt_colData_WT$condition <- factor(dt_colData_WT$full_guide_grp ,levels=c(nontargeting,targeting))
 
 # Just like lcdb_wf ignore the version number
 se <- tximeta(dt_colData_WT, ignoreTxVersion=TRUE, txOut=TRUE)
