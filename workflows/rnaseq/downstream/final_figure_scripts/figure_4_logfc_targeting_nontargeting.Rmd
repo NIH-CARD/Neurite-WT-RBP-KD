@@ -60,7 +60,7 @@ targeting <- params$targeting
 nontargeting <- params$nontargeting
 base_folder <- "final_figures/figure_4/"
 
-contrast_name <- 'TDP43_N_sg200_vs_sg100'
+contrast_name <- 'TDP43_N_targeting_/_nontargeting'
 targeting <- 'sg200_N_TDP43kd'
 nontargeting <- 'sg100_N_TDP43kd'
 ```
@@ -86,7 +86,7 @@ rownames(colData) <- colData[,1]
 
 ```
 
-```{r dds_initial, cache=FALSE, config=c(config$main, config$toggle$salmon, config$toggle$kallisto)}
+```{r dds_initial, cache=TRUE, config=c(config$main, config$toggle$salmon, config$toggle$kallisto), dependson=c('config', 'coldata_setup')}
 # Convert featureCounts transcript-level counts into DESeq2 object, and run
 # variance-stabiliizing transform.
 # Will likely need to find a way to run salmon quant to combine the collapsable samples to 
@@ -177,7 +177,7 @@ ggsave(paste0("Publication_PCA_plots/", variable, "figure_4_pca_",first_PC, "_",
 ```
 
 
-```{r fishpond}
+```{r fishpond, cache=TRUE, dependson=c('dds_initial', 'coldata_setup')}
 library(fishpond)
 library(tibble)
 y <- scaleInfReps(y)
@@ -195,7 +195,7 @@ sign_tran <- sign_tran[sign_tran$qvalue < 0.05,]
 # Must arrange by something for transite. Must specify what that is. They suggest log2FC
 sign_tran <- dplyr::arrange(sign_tran, log2FC, locfdr)
 sign_out <- apply(sign_tran, 2, as.character)
-write.csv(sign_out, paste0(base_folder, "diff_tran", contrast_name, ".csv"), quote=FALSE, row.names=FALSE)
+write.csv(sign_out, paste0(base_folder, "diff_tran_figure_4_", contrast_name, ".csv"), quote=FALSE, row.names=FALSE)
 ```
 
 
@@ -303,7 +303,7 @@ ma_plot_data['baseMean'] = lapply(ma_plot_data['baseMean'], function(x) {
 # Replace any empty SYMBOLS
 ma_plot_data$SYMBOL[ma_plot_data$SYMBOL == ""] <- ma_plot_data$ENSEMBL[ma_plot_data$SYMBOL == ""]
 
-ggmaplot(ma_plot_data,  main = expression("S3 Neurite / S3 Soma"), 
+ggmaplot(ma_plot_data,  main = contrast_name, 
     fc=1.5, 
     fdr=0.05, 
     genenames=as.vector(ma_plot_data$SYMBOL),
