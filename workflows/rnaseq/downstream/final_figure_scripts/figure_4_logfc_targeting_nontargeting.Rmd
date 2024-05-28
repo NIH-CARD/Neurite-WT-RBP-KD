@@ -172,8 +172,10 @@ p <- ggplot(data=mat,aes_string(x = first_PC, y = second_PC, color = color_var))
     scale_shape_manual(values=c(4,16, 0)) +
     geom_point(size=3) + xlab(paste0(first_PC,': ', round(pv[1]*100), '% variance')) +
           ylab(paste0(second_PC,': ', round(pv[2]*100), '% variance')) + coord_fixed() +
-          ggtitle(paste0(first_PC, " and ", second_PC, " TDP 43 samples by cellular zone"))
-ggsave(paste0("Publication_PCA_plots/", variable, "figure_4_pca_",first_PC, "_", second_PC, "_TD43_KD.pdf"), plot=p)
+          ggtitle(paste0(first_PC, " and ", second_PC, ", "contrast_name))
+ggsave(paste0("Publication_PCA_plots/", variable, 
+                        "figure_4_pca_",first_PC, "_", 
+                        second_PC, "_", contrast_name, ".pdf"), plot=p)
 ```
 
 
