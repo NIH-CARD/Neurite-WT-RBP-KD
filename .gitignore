@@ -77,3 +77,8 @@ workflows/rnaseq/downstream/rnaseq.html
 *.pdf
 *N_vs_S*.csv
 *N_vs_WT*.csv
+
+
+# biowulf output
+*.e
+*.o
