@@ -172,6 +172,17 @@ ggplotly(p)
 # Create a list of dds objects used as the basis for differential expression.
 #
 # May need substantial editing.
+
+colData$targeting <- case_match(colData$guide_group, 
+                                     c('sg100', 'sg1126') ~ 'non-targeting',
+                                     c('sg200', 'sg1152', 'sg1128') ~ 'targeting',
+                                     'WT' ~ 'WT',
+                                     )
+colData$targeting <- factor(colData$targeting, levels=c('nontargeting', 'targeting')
+                            )
+# The soma is the reference lvl since it includes everything
+colData$zone <- factor(colData$zone, levels=c('S', 'N')
+
 lst <- list(
             # NOTE: Delete these for real data!
             # They are just examples to demonstrate functionality.
@@ -179,7 +190,7 @@ lst <- list(
             # Example 1: simplest case
             main=list(
                 sampletable=colData,
-                design=~full_guide_grp)
+                design=~full_guide_grp),
 
             # Example 2: demonstrates how to filter samples.
             # Note that subset.counts=TRUE is required when filtering.
@@ -188,18 +199,58 @@ lst <- list(
             #    design=~group,
             #    subset_counts=TRUE
             #),
+            targeting_nontargeting_N_HNRNPA1kd=list(
+                sampletable=colData %>% filter(group == 'HNRNPA1kd' & zone == 'N'),
+                design=~targeting,
+                subset_counts=TRUE),
+            
+            targeting_nontargeting_S_HNRNPA1kd=list(
+                sampletable=colData %>% filter(group == 'HNRNPA1kd' & zone == 'S'),
+                design=~targeting,
+                subset_counts=TRUE),
+            
+            targeting_nontargeting_N_TDP43kd=list(
+                sampletable=colData %>% filter(group == 'TDP43kd' & zone == 'N'),
+                design=~targeting,
+                subset_counts=TRUE),
+
+            targeting_nontargeting_S_TDP43kd=list(
+                sampletable=colData %>% filter(group == 'TDP43kd' & zone == 'S'),
+                design=~targeting,
+                subset_counts=TRUE),
+
+            targeting_nontargeting_N_FUSkd=list(
+                sampletable=colData %>% filter(group == 'FUSkd' & zone == 'N'),
+                design=~targeting,
+                subset_counts=TRUE),
+
+            targeting_nontargeting_S_FUSkd=list(
+                sampletable=colData %>% filter(group == 'FUSkd' & zone == 'S'),
+                design=~targeting,
+                subset_counts=TRUE),
+
+            targeting_nontargeting_N_WT=list(
+                sampletable=colData %>% filter(group == 'WT' & zone == 'N'),
+                design=~targeting,
+                subset_counts=TRUE),
+
+            targeting_nontargeting_S_WT=list(
+                sampletable=colData %>% filter(group == 'WT' & zone == 'S'),
+                design=~targeting,
+                subset_counts=TRUE),
+
 
             # Example 3: use salmon
-            #salmon=list(
-            #    sampletable=colData,
-            #    design=~full_guide_grp,
-             #   salmon=TRUE)
+            salmon=list(
+                sampletable=colData,
+                design=~full_guide_grp,
+                salmon=TRUE),
 
            # # Example 4: use kallisto
-            #kallisto=list(
-            #    sampletable=colData,
-            #    design=~full_guide_grp,
-            #    kallisto=TRUE)
+            kallisto=list(
+                sampletable=colData,
+                design=~full_guide_grp,
+                kallisto=TRUE)
             # ------------------------------------------------------------------
           )
 dds_list <- map(lst, lcdbwf:::make_dds, config=config, parallel=config$parallel$parallel)
