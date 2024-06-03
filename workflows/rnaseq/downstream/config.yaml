@@ -112,7 +112,7 @@ plotting:
 # Configure parallelization here.
 parallel:
 
-  parallel: TRUE
+  parallel: FALSE
 
   # If "cores" is an integer, use that many cores.
   #
