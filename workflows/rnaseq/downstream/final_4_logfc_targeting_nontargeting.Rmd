@@ -13,6 +13,8 @@ params:
     base_folder: ''
 ---
 
+
+
 ```{r global_options, include=FALSE}
 # Sets up global options for rendering RMarkdown into HTML.
 system("export TMPDIR=/lscratch/$SLURM_JOB_ID")
@@ -60,9 +62,10 @@ targeting <- params$targeting
 nontargeting <- params$nontargeting
 base_folder <- "final_figures/figure_4/"
 
-contrast_name <- 'TDP43_N_targeting_/_nontargeting'
-targeting <- 'sg200_N_TDP43kd'
-nontargeting <- 'sg100_N_TDP43kd'
+#contrast_name <- 'TDP43_N_targeting_over_nontargeting'
+#targeting <- 'sg200_N_TDP43kd'
+#nontargeting <- 'sg100_N_TDP43kd'
+
 ```
 
 
@@ -86,7 +89,7 @@ rownames(colData) <- colData[,1]
 
 ```
 
-```{r dds_initial, cache=TRUE, config=c(config$main, config$toggle$salmon, config$toggle$kallisto), dependson=c('config', 'coldata_setup')}
+```{r dds_initial, cache=FALSE, config=c(config$main, config$toggle$salmon, config$toggle$kallisto), dependson=c('config', 'coldata_setup')}
 # Convert featureCounts transcript-level counts into DESeq2 object, and run
 # variance-stabiliizing transform.
 # Will likely need to find a way to run salmon quant to combine the collapsable samples to 
@@ -122,64 +125,80 @@ dt_colData_WT$condition <- factor(dt_colData_WT$full_guide_grp ,levels=c(nontarg
 
 # Just like lcdb_wf ignore the version number
 se <- tximeta(dt_colData_WT, ignoreTxVersion=TRUE, txOut=TRUE)
+gse <- summarizeToGene(se)
 
 # library(org.Hs.eg.db)
 # se <- addIds(se,"REFSEQ",gene=FALSE)
 
 # Rename for the statistical portion
 y <- se
+yg <- gse
 
 ```
 
-```{r PCA,config=c(config$main, config$toggle$salmon, config$toggle$kallisto)}
+```{r test}
+my_function <- function(ya, dt_colData_WT) {
+  # Ensure 'ya' is a DESeqDataSet object
+  if (!inherits(ya, "DESeqDataSet")) {
+    stop("Input 'ya' must be a DESeqDataSet object.")
+  }
+
+
+}
+
+
+```
+
+```{r pca_function}
 library(DESeq2)
 library(ggplot2)
 library(dplyr)
+library(SummarizedExperiment)
 
-ya <- DESeqDataSet(y, design = ~1)
-vsd <- varianceStabilizingTransformation(ya, blind=TRUE)
 
-colData(vsd)$targeting <- case_match(colData(vsd)$guide_group, 
-                                     c('sg100', 'sg1126') ~ 'non-targeting',
-                                     c('sg200', 'sg1152', 'sg1128') ~ 'targeting',
-                                     'WT' ~ 'WT',
-                                     )
 
-#PCA without correction
-pca_matrix<- as.data.frame(assay(vsd)) %>%
-    base::as.matrix() %>%
-    t()
-sample_pca <- prcomp(pca_matrix)
 
-# HAven't satandarzied yet
-pc_scores <- sample_pca$x %>% as_tibble(rownames="sample")
+```
 
+```{r PCA_gene_level,config=c(config$main, config$toggle$salmon, config$toggle$kallisto)}
 # Change variables in order to generate PCA plots
-variable <- c('targeting')
 PC1 <- 1
 PC2 <- 2
-first_PC <- paste0('PC', PC1)
-second_PC <- paste0('PC', PC2)
-color_var <- if(variable == 'group') 'group.1' else variable # group is similar to the internal var
+variable <- c('targeting')
+extra_info <- "gene"
 
-pc_metadata <- inner_join(pc_scores, dt_colData_WT, join_by(sample == names))
+lcdbwf:::createSwishPCA(yg, PC1, PC2, variable, contrast_name, extra_info)
+```
 
-mat <- DESeq2::plotPCA(vsd, c(variable, 'targeting'), pcsToUse=PC1:PC2, returnData=TRUE)
+```{r PCA,config=c(config$main, config$toggle$salmon, config$toggle$kallisto)}
+extra_info <- "transcript"
 
-pv <- attr(mat, 'percentVar')
-
-p <- ggplot(data=mat,aes_string(x = first_PC, y = second_PC, color = color_var)) +
-    scale_shape_manual(values=c(4,16, 0)) +
-    geom_point(size=3) + xlab(paste0(first_PC,': ', round(pv[1]*100), '% variance')) +
-          ylab(paste0(second_PC,': ', round(pv[2]*100), '% variance')) + coord_fixed() +
-          ggtitle(paste0(first_PC, " and ", second_PC, ", "contrast_name))
-ggsave(paste0("Publication_PCA_plots/", variable, 
-                        "figure_4_pca_",first_PC, "_", 
-                        second_PC, "_", contrast_name, ".pdf"), plot=p)
+lcdbwf:::createSwishPCA(y, PC1, PC2, variable, contrast_name, extra_info)
 ```
 
 
-```{r fishpond, cache=TRUE, dependson=c('dds_initial', 'coldata_setup')}
+```{r fishpond_gene_level, cache=FALSE, dependson=c('dds_initial', 'coldata_setup')}
+library(fishpond)
+library(tibble)
+yg <- scaleInfReps(yg)
+yg <- labelKeep(yg)
+yg <- yg[mcols(yg)$keep,]
+set.seed(1)
+yg <- swish(yg, x="condition")
+
+# Get the rows with an FDR in the 5% level
+df_gene <- mcols(yg)
+df_gene$tx_name <- rownames(df_gene)
+sign_tran_gene <- as.tibble(df_gene)
+sign_tran_gene <- sign_tran_gene[sign_tran_gene$qvalue < 0.05,]
+# Must arrange by something for transite. Must specify what that is. They suggest log2FC
+sign_tran_gene <- dplyr::arrange(sign_tran_gene, log2FC, locfdr)
+sign_out_gene <- apply(sign_tran_gene, 2, as.character)
+write.csv(sign_out_gene, paste0(base_folder, "diff_gene_figure_4_", contrast_name, ".csv"), quote=FALSE, row.names=FALSE)
+```
+
+
+```{r fishpond_transcript_level, cache=FALSE, dependson=c('dds_initial', 'coldata_setup')}
 library(fishpond)
 library(tibble)
 y <- scaleInfReps(y)
@@ -189,7 +208,6 @@ set.seed(1)
 y <- swish(y, x="condition")
 
 # Get the rows with an FDR in the 5% level
-sign_tran <- y[mcols(y)$qvalue< 0.05]
 df <- mcols(y)
 df$tx_name <- rownames(df)
 sign_tran <- as.tibble(df)
@@ -200,14 +218,87 @@ sign_out <- apply(sign_tran, 2, as.character)
 write.csv(sign_out, paste0(base_folder, "diff_tran_figure_4_", contrast_name, ".csv"), quote=FALSE, row.names=FALSE)
 ```
 
-
-
 ```{r transite}
 
 library(transite)
 
 library(biomaRt)
-ensembl <- useEnsembl(biomart = "genes", dataset = "hsapiens_gene_ensembl", mirror='useast')
+ensembl <- useEnsembl(biomart = "genes", dataset = "hsapiens_gene_ensembl", mirror='www')
+#search for terms
+i <- searchAttributes(mart=ensembl, pattern="RefSeq")
+i[1:20,]
+# The below just converts references
+#refseq_res <- getBM(attributes = c('ensembl_transcript_id_version', 'refseq_mrna'),
+#      filters = 'ensembl_transcript_id_version',
+#      values = sign_tran$tx_name,
+#      mart = ensembl)
+
+# We'll try with cdna and 3'UTR, and maybe with full transcript which is transcript_exon_intron
+
+# Just trying to get all of sign_tran
+rows <- nrow(sign_tran_gene)
+
+# delete original file if already there
+transcripts_file <- paste0(base_folder, "transcripts_", contrast_name, "_gene_level.csv")
+if (file.exists(transcripts_file)) {file.remove(transcripts_file)}
+
+tran1 <- sign_tran[1:2000,]
+subs <- gsub("\\..*","", tran1$tx_name)
+sequences_tei_1 <- getSequence(id=subs, mart=ensembl, seqType='transcript_exon_intron', type='ensembl_transcript_id')
+write.table(sequences_tei_1, paste0(base_folder, "transcripts_",contrast_name,"_gene_level.csv"), quote=FALSE, sep=',', row.names=FALSE)
+tran2 <- sign_tran[2001:4000,]
+subs <- gsub("\\..*","", tran2$tx_name)
+sequences_tei_2 <- getSequence(id=subs, mart=ensembl, seqType='transcript_exon_intron', type='ensembl_transcript_id')
+write.table(sequences_tei_2, paste0(base_folder, "transcripts_",contrast_name,".csv"), append=TRUE, quote=FALSE, sep=',', row.names=FALSE)
+tran3 <- sign_tran[4001:6000,]
+subs <- gsub("\\..*","", tran3$tx_name)
+sequences_tei_3 <- getSequence(id=subs, mart=ensembl, seqType='transcript_exon_intron', type='ensembl_transcript_id')
+write.table(sequences_tei_3, paste0(base_folder, "transcripts_",contrast_name,".csv"), append=TRUE, quote=FALSE, sep=',', row.names=FALSE)
+tran4 <- sign_tran[6001:8000,]
+subs <- gsub("\\..*","", tran4$tx_name)
+sequences_tei_4 <- getSequence(id=subs, mart=ensembl, seqType='transcript_exon_intron', type='ensembl_transcript_id')
+write.table(sequences_tei_4, paste0(base_folder, "transcripts_",contrast_name,".csv"), append=TRUE, quote=FALSE, sep=',', row.names=FALSE)
+tran5 <- sign_tran[8001:10000,]
+subs <- gsub("\\..*","", tran5$tx_name)
+sequences_tei_5 <- getSequence(id=subs, mart=ensembl, seqType='transcript_exon_intron', type='ensembl_transcript_id')
+write.table(sequences_tei_5, paste0(base_folder, "transcripts_",contrast_name,".csv"), append=TRUE, quote=FALSE, sep=',', row.names=FALSE)
+tran6 <- sign_tran[10001:rows,]
+subs <- gsub("\\..*","", tran6$tx_name)
+sequences_tei_6 <- getSequence(id=subs, mart=ensembl, seqType='transcript_exon_intron', type='ensembl_transcript_id')
+write.table(sequences_tei_6, paste0(base_folder, "transcripts_",contrast_name,".csv"), append=TRUE, quote=FALSE, sep=',', row.names=FALSE)
+
+library(readr)
+library(stringr)
+library(dplyr)
+
+seqs_df <- read_csv(paste0(base_folder, "transcripts_",contrast_name,".csv"))
+seqs_df <- seqs_df[,c(2,1)]
+# get tx names from sign_tran
+subs <- gsub("\\..*","", sign_tran$tx_name)
+# Convert to RNA and order according to fdr in sign_tran
+seqs_df <- seqs_df %>%
+    mutate(across("transcript_exon_intron", \(x) str_replace_all(x, "T", "U"))) %>%
+    arrange(match(ensembl_transcript_id, subs))
+
+# Turn seqs into named vector
+# Will still need to pull out the ensembl_transcript_ids at the end
+seqs <- tibble::deframe(seqs_df)
+seqs <- seqs[names(seqs) != "ensembl_transcript_id"]
+# Remove bad characters
+seqs <- seqs[!grepl("N",seqs)]
+
+# Don't forget to set TMPDIR on the command line with some lscratch. Export TMPDIR=/lscratch/$SLURM_JOB_ID
+# # The real trick is to make sure there are no NA values
+result <- run_kmer_spma(seqs, sign_tran$log2FC,transcript_values_label="log2FC",n_cores=20)
+saveRDS(result, paste0(base_folder, contrast_name,".rds"))
+```
+
+```{r transite_transcript}
+
+library(transite)
+
+library(biomaRt)
+ensembl <- useEnsembl(biomart = "genes", dataset = "hsapiens_gene_ensembl", mirror='www')
 #search for terms
 i <- searchAttributes(mart=ensembl, pattern="RefSeq")
 i[1:20,]
@@ -277,14 +368,16 @@ result <- run_kmer_spma(seqs, sign_tran$log2FC,transcript_values_label="log2FC",
 saveRDS(result, paste0(base_folder, contrast_name,".rds"))
 ```
 
-```{r maplot,cache=TRUE,config=c(config$main, config$toggle$salmon, config$toggle$kallisto), dependson=c('swish', 'tximeta_setup','dds_initial')}
+
+
+```{r maplot,cache=FALSE,config=c(config$main, config$toggle$salmon, config$toggle$kallisto), dependson=c('swish', 'tximeta_setup','dds_initial')}
 library(ggpubr)
 library(tidyverse)
 
 genedb <- fread('gene_table_GRCh38-2020-A.tsv')
 library(purrr)
 library(stringr)
-gene_ids_swee <- mcols(y)$gene_id
+gene_ids_swee <- mcols(yg)$gene_id
 mcols(y)$gene_id_trimmed <- sub("\\..*$", "", as.character(mcols(y)$gene_id))
 gene_id_lookup <- merge(genedb, mcols(y), by.x='ENSEMBL', by.y='gene_id_trimmed', all=FALSE)
 
@@ -321,10 +414,11 @@ ggmaplot(ma_plot_data,  main = contrast_name,
    size=0.5
 )
 
-relevant_data <- ma_plot_data[ma_plot_data$padj < 0.05,]
-relevant_data <- ma_plot_data[ma_plot_data$log2FoldChange < 1,]
-relevant_data <- relevant_data['ENSEMBL']
-write.csv(relevant_data, paste0("diff_f0r_GI", contrast_name, ".csv"), quote=FALSE, row.names=FALSE)
+relevant_data <- as.data.table(ma_plot_data[ma_plot_data$padj < 0.05,])
+relevant_data <- relevant_data[relevant_data$log2FoldChange > 0]
+relevant_data <- relevant_data[order(padj, -log2FoldChange)]
+relevant_data_names <- relevant_data[,'ENSEMBL']
+write.csv(relevant_data_names, paste0("final_figures/diff_f0r_GO", contrast_name, ".csv"), quote=FALSE, row.names=FALSE)
 ```
 
 
