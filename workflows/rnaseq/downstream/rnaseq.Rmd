@@ -178,11 +178,11 @@ colData$targeting <- case_match(colData$guide_group,
                                      c('sg200', 'sg1152', 'sg1128') ~ 'targeting',
                                      'WT' ~ 'WT',
                                      )
-colData$targeting <- factor(colData$targeting, levels=c('nontargeting', 'targeting')
+colData$targeting <- factor(colData$targeting, levels=c('non-targeting', 'targeting')
                             )
 colData$pair <- factor(colData$pair)
 # The soma is the reference lvl since it includes everything
-colData$zone <- factor(colData$zone, levels=c('S', 'N')
+colData$zone <- factor(colData$zone, levels=c('S', 'N'))
 
 lst <- list(
             # NOTE: Delete these for real data!
@@ -241,32 +241,32 @@ lst <- list(
                 subset_counts=TRUE),
 
             zone_sg1152_FUSkd=list(
-                sampletable=colData %>% filter(roup == 'FUSkd' & guide_group='sg1152'),
+                sampletable=colData %>% filter(group == 'FUSkd' & guide_group=='sg1152'),
                 design=~pair + zone,
                 subset_counts=TRUE),
 
             zone_sg100_FUSkd=list(
-                sampletable=colData %>% filter(roup == 'FUSkd' & guide_group='sg100'),
+                sampletable=colData %>% filter(group == 'FUSkd' & guide_group=='sg100'),
                 design=~pair + zone,
                 subset_counts=TRUE),
 
             zone_sg100_TDP43kd=list(
-                sampletable=colData %>% filter(roup == 'TDP43kd' & guide_group='sg100'),
+                sampletable=colData %>% filter(group == 'TDP43kd' & guide_group=='sg100'),
                 design=~pair + zone,
                 subset_counts=TRUE),
 
             zone_sg200_TDP43kd=list(
-                sampletable=colData %>% filter(roup == 'TDP43kd' & guide_group='sg200'),
+                sampletable=colData %>% filter(group == 'TDP43kd' & guide_group=='sg200'),
                 design=~pair + zone,
                 subset_counts=TRUE),
 
             zone_sg1126_HNRNPA1kd=list(
-                sampletable=colData %>% filter(roup == 'HNRNPA1kd' & guide_group='sg1126'),
+                sampletable=colData %>% filter(group == 'HNRNPA1kd' & guide_group=='sg1126'),
                 design=~pair + zone,
                 subset_counts=TRUE),
 
             zone_sg1128_HNRNPA1kd=list(
-                sampletable=colData %>% filter(roup == 'HNRNPA1kd' & guide_group='sg1128'),
+                sampletable=colData %>% filter(group == 'HNRNPA1kd' & guide_group=='sg1128'),
                 design=~pair + zone,
                 subset_counts=TRUE),
 
@@ -283,6 +283,7 @@ lst <- list(
                 kallisto=TRUE)
             # ------------------------------------------------------------------
           )
+
 dds_list <- map(lst, lcdbwf:::make_dds, config=config, parallel=config$parallel$parallel)
 ```
 
@@ -333,7 +334,7 @@ there are more tabs for the various output.
 ```{r results_01, dependson='dds_list', cache=TRUE}
 contr_01afa_lfc0_targeting_nontargeting_N_HNRNPA1kd_fc <- lcdbwf:::make_results(
   dds_name="targeting_nontargeting_N_HNRNPA1kd",
-  contrast=c("targeting", "nontargeting", "targeting"),
+  contrast=c("targeting", "non-targeting", "targeting"),
   #lfcThreshold=1,
   type="ashr",
   label="HNRNPA1-- targeting vs nontargeting lfc >0"
@@ -341,18 +342,21 @@ contr_01afa_lfc0_targeting_nontargeting_N_HNRNPA1kd_fc <- lcdbwf:::make_results(
 ```
 
 ```{r results_011, dependson='dds_list', cache=TRUE}
-contr_01afa_lfc1_WTWT_fc <- lcdbwf:::make_results(
-  dds_name="main",
-  contrast=c("full_guide_grp", "WT_S", "WT_N"),
+contr_01afa_lfc1_targeting_nontargeting_N_HNRNPA1kd <- lcdbwf:::make_results(
+  dds_name="targeting_nontargeting_N_HNRNPA1kd",
   lfcThreshold=1,
+  contrast=c("targeting", "non-targeting", "targeting"),
   type="ashr",
-  label="Soma-- Neurite WT lfc >1 FeatureC"
+  label="HNRNPA1-- targeting vs nontargeting lfc >1"
 )
 ```
 
 ```{r results_02, dependson='dds_list', cache=TRUE, eval=FALSE}
-contr_01af_lfc0_WTWT_sal <- lcdbwf:::make_results(
-  dds_name="salmon",
+contr_01af_lfc0_targeting_nontargeting_S_HNRNPA1kd <- lcdbwf:::make_results(
+  dds_name="targeting_nontargeting_S_HNRNPA1kd",
+  lfcThreshold=0,
+  contrast=c("targeting", "non-targeting", "targeting"),
+  label="HNRNPA1-- targeting vs nontargeting lfc >1"
   contrast=c("full_guide_grp", "WT_S", "WT_N"),
   type="ashr",
   label="Soma -- Neurite WT lfc >0 Salmon"
@@ -361,11 +365,11 @@ contr_01af_lfc0_WTWT_sal <- lcdbwf:::make_results(
 
 ```{r results_03, dependson='dds_list', cache=TRUE}
 # main contrasts first, then salmon and kallisto
-contr_02af_sg100_SN_TDP <- lcdbwf:::make_results(
-  dds_name="main",
-  contrast=c('full_guide_grp', 'sg100_S_TDP43kd', 'sg100_N_TDP43kd'),
+contr_02af_zone_sg1126_HNRNPA1kd <- lcdbwf:::make_results(
+  dds_name="zone_sg1126_HNRNPA1kd",
+  contrast=c('full_guide_grp', 'sg1126_S_HNRNPA1kd', 'sg1126_N_HNRNPA1kd'),
   type='ashr',
-  label='NT Soma -- Neurite TDP43kd lfc > 0 FeatureC'
+  label='zone_sg1126_HNRNPA1kd lfc > 0 FeatureC'
 )
 ```
 

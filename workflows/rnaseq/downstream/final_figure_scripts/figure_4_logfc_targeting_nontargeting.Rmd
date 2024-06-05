@@ -207,7 +207,82 @@ write.csv(sign_out, paste0(base_folder, "diff_tran_figure_4_", contrast_name, ".
 library(transite)
 
 library(biomaRt)
-ensembl <- useEnsembl(biomart = "genes", dataset = "hsapiens_gene_ensembl", mirror='useast')
+ensembl <- useEnsembl(biomart = "genes", dataset = "hsapiens_gene_ensembl", mirror='www')
+#search for terms
+i <- searchAttributes(mart=ensembl, pattern="RefSeq")
+i[1:20,]
+# The below just converts references
+#refseq_res <- getBM(attributes = c('ensembl_transcript_id_version', 'refseq_mrna'),
+#      filters = 'ensembl_transcript_id_version',
+#      values = sign_tran$tx_name,
+#      mart = ensembl)
+
+# We'll try with cdna and 3'UTR, and maybe with full transcript which is transcript_exon_intron
+
+# Just trying to get all of sign_tran
+rows <- nrow(sign_tran_gene)
+
+# delete original file if already there
+transcripts_file <- paste0(base_folder, "transcripts_", contrast_name, "_gene_level.csv")
+if (file.exists(transcripts_file)) {file.remove(transcripts_file)}
+
+tran1 <- sign_tran[1:2000,]
+subs <- gsub("\\..*","", tran1$tx_name)
+sequences_tei_1 <- getSequence(id=subs, mart=ensembl, seqType='transcript_exon_intron', type='ensembl_transcript_id')
+write.table(sequences_tei_1, paste0(base_folder, "transcripts_",contrast_name,"_gene_level.csv"), quote=FALSE, sep=',', row.names=FALSE)
+tran2 <- sign_tran[2001:4000,]
+subs <- gsub("\\..*","", tran2$tx_name)
+sequences_tei_2 <- getSequence(id=subs, mart=ensembl, seqType='transcript_exon_intron', type='ensembl_transcript_id')
+write.table(sequences_tei_2, paste0(base_folder, "transcripts_",contrast_name,".csv"), append=TRUE, quote=FALSE, sep=',', row.names=FALSE)
+tran3 <- sign_tran[4001:6000,]
+subs <- gsub("\\..*","", tran3$tx_name)
+sequences_tei_3 <- getSequence(id=subs, mart=ensembl, seqType='transcript_exon_intron', type='ensembl_transcript_id')
+write.table(sequences_tei_3, paste0(base_folder, "transcripts_",contrast_name,".csv"), append=TRUE, quote=FALSE, sep=',', row.names=FALSE)
+tran4 <- sign_tran[6001:8000,]
+subs <- gsub("\\..*","", tran4$tx_name)
+sequences_tei_4 <- getSequence(id=subs, mart=ensembl, seqType='transcript_exon_intron', type='ensembl_transcript_id')
+write.table(sequences_tei_4, paste0(base_folder, "transcripts_",contrast_name,".csv"), append=TRUE, quote=FALSE, sep=',', row.names=FALSE)
+tran5 <- sign_tran[8001:10000,]
+subs <- gsub("\\..*","", tran5$tx_name)
+sequences_tei_5 <- getSequence(id=subs, mart=ensembl, seqType='transcript_exon_intron', type='ensembl_transcript_id')
+write.table(sequences_tei_5, paste0(base_folder, "transcripts_",contrast_name,".csv"), append=TRUE, quote=FALSE, sep=',', row.names=FALSE)
+tran6 <- sign_tran[10001:rows,]
+subs <- gsub("\\..*","", tran6$tx_name)
+sequences_tei_6 <- getSequence(id=subs, mart=ensembl, seqType='transcript_exon_intron', type='ensembl_transcript_id')
+write.table(sequences_tei_6, paste0(base_folder, "transcripts_",contrast_name,".csv"), append=TRUE, quote=FALSE, sep=',', row.names=FALSE)
+
+library(readr)
+library(stringr)
+library(dplyr)
+
+seqs_df <- read_csv(paste0(base_folder, "transcripts_",contrast_name,".csv"))
+seqs_df <- seqs_df[,c(2,1)]
+# get tx names from sign_tran
+subs <- gsub("\\..*","", sign_tran$tx_name)
+# Convert to RNA and order according to fdr in sign_tran
+seqs_df <- seqs_df %>%
+    mutate(across("transcript_exon_intron", \(x) str_replace_all(x, "T", "U"))) %>%
+    arrange(match(ensembl_transcript_id, subs))
+
+# Turn seqs into named vector
+# Will still need to pull out the ensembl_transcript_ids at the end
+seqs <- tibble::deframe(seqs_df)
+seqs <- seqs[names(seqs) != "ensembl_transcript_id"]
+# Remove bad characters
+seqs <- seqs[!grepl("N",seqs)]
+
+# Don't forget to set TMPDIR on the command line with some lscratch. Export TMPDIR=/lscratch/$SLURM_JOB_ID
+# # The real trick is to make sure there are no NA values
+result <- run_kmer_spma(seqs, sign_tran$log2FC,transcript_values_label="log2FC",n_cores=20)
+saveRDS(result, paste0(base_folder, contrast_name,".rds"))
+```
+
+```{r transite_transcript}
+
+library(transite)
+
+library(biomaRt)
+ensembl <- useEnsembl(biomart = "genes", dataset = "hsapiens_gene_ensembl", mirror='www')
 #search for terms
 i <- searchAttributes(mart=ensembl, pattern="RefSeq")
 i[1:20,]
