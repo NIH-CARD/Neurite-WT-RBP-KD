@@ -44,7 +44,7 @@ if (config$parallel$parallel){
 }
 ```
 
-```{r load, cache=TRUE, cache.extra=file.info('combined.Rds')$mtime}
+```{r load, cache=TRUE, cache.extra=file.info('combined.Rds')$mtime, cache.lazy=FALSE}
 obj <- readRDS('combined.Rds')
 res_list <- obj$res_list
 dds_list <- obj$dds_list
@@ -64,7 +64,7 @@ ontology_list <- lcdbwf:::get_ontology_list(config)
 
 ```
 
-```{r enrich, cache=TRUE, eval=config$toggle$functional_enrichment, config=c(config$main, config$functional_enrichment), dependson=c('functional_enrichment_prep', 'assemble_variables')}
+```{r enrich, cache=TRUE, eval=config$toggle$functional_enrichment, config=c(config$main, config$functional_enrichment), dependson=c('functional_enrichment_prep', 'assemble_variables'), cache.lazy=FALSE}
 enrich_list <- lcdbwf:::run_enricher(res_list=res_list,
                                      ontology_list=ontology_list,
                                      config=config,
@@ -72,14 +72,14 @@ enrich_list <- lcdbwf:::run_enricher(res_list=res_list,
 
 ```
 
-```{r combined_rds, cache=TRUE, dependson='enrich'}
+```{r combined_rds, cache=TRUE, dependson='enrich', cache.lazy=FALSE}
 
 obj <- lcdbwf:::compose_results(res_list=res_list,
                                 dds_list=dds_list,
                                 rld_list=rld_list,
                                 enrich_list=enrich_list)
 
-saveRDS(obj, file='combined.Rds', compress=FALSE)
+#saveRDS(obj, file='combined.Rds', compress=FALSE)
 ```
 
 ```{r functional_enrichment_plots}
