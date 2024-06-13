@@ -112,7 +112,7 @@ plotting:
 # Configure parallelization here.
 parallel:
 
-  parallel: FALSE
+  parallel: TRUE
 
   # If "cores" is an integer, use that many cores.
   #
@@ -205,28 +205,29 @@ functional_enrichment:
   ontologies:
     # Standard Gene Ontology
     "BP": "GO Biological Process"
-      #"CC": "GO Cellular Component"
-      #"MF": "GO Molecular Function"
+    "CC": "GO Cellular Component"
+    "MF": "GO Molecular Function"
 
     # KEGG pathway analysis
-    #"KEGG": "KEGG Pathways"
+    "KEGG": "KEGG Pathways"
 
     ## MSigDB (compiled for human, but orthologs are available which may be of
     ## questionable utility for other organisms).  To see what's available, use
     ## lcdbwf::available_msigdb_keys() and cross-reference with
     ## https://www.gsea-msigdb.org/gsea/msigdb/collections.jsp
-    #"C2_CGP": "MSigDB chemical and genetic perturbations"
-    #"C2_CP": "MSigDb Canonical pathways"
-    #"C5_GO:BP": "MSigDB's version of BP"
-    #"C5_GO:CC": "MSigDB's version of CC"
-    #"C5_GO:MF": "MSigDB's version of MF"
-    #"C8": "MSigDB cell-type-specific gene sets"
-    #"H": "MSigDB hallmark gene sets"
+    "C2_CGP": "MSigDB chemical and genetic perturbations"
+    "C2_CP": "MSigDb Canonical pathways"
+    "C5_GO:BP": "MSigDB's version of BP"
+    "C5_GO:CC": "MSigDB's version of CC"
+    "C5_GO:MF": "MSigDB's version of MF"
+    "C8": "MSigDB cell-type-specific gene sets"
+      #"H": "MSigDB hallmark gene sets"
 
   # Type can be "OR" for overrepresentation analysis, or "GSEA" for gene set
   # enrichment analysis.
   kind:
     - "OR"
+    - "GSEA"
 
   # Options here are "up", "down" or "changed".
   directions:

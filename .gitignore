@@ -82,3 +82,8 @@ workflows/rnaseq/downstream/rnaseq.html
 # biowulf output
 *.e
 *.o
+
+# Images
+*.png
+*.pdf
+workflows/rnaseq/downstream/final_figures/*
