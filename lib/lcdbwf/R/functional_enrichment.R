@@ -583,11 +583,17 @@ enrich_list_lapply <- function(enrich_list, func, send_names=FALSE, ...){
     for (direction in names(enrich_list[[name]])){
       out[[name]][[direction]] <- list()
       for (ont in names(enrich_list[[name]][[direction]])){
-        x <- enrich_list[[name]][[direction]][[ont]]
-        if (send_names){
-          out[[name]][[direction]][[ont]] <- func(x, name=name, direction=direction, ont=ont, ...)
-        } else {
-          out[[name]][[direction]][[ont]] <- func(x, ...)
+        if (length(enrich_list[[name]][[direction]][[ont]]$ID) < 1){
+          print("isnull")
+          next # skip this enrichment if there is nothing there
+        }
+        else{
+          x <- enrich_list[[name]][[direction]][[ont]]
+          if (send_names){
+            out[[name]][[direction]][[ont]] <- func(x, name=name, direction=direction, ont=ont, ...)
+          } else {
+            out[[name]][[direction]][[ont]] <- func(x, ...)
+          }
         }
       }
     }
