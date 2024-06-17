@@ -584,7 +584,7 @@ enrich_list_lapply <- function(enrich_list, func, send_names=FALSE, ...){
       out[[name]][[direction]] <- list()
       for (ont in names(enrich_list[[name]][[direction]])){
         if (length(enrich_list[[name]][[direction]][[ont]]$ID) < 1){
-          print("isnull")
+          print(paste(name, direction, ont, "is empty", sep=" "))
           next # skip this enrichment if there is nothing there
         }
         else{

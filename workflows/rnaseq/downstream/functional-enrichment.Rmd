@@ -72,7 +72,7 @@ enrich_list <- lcdbwf:::run_enricher(res_list=res_list,
 
 ```
 
-```{r combined_rds, cache=TRUE, dependson='enrich', cache.lazy=FALSE}
+```{r combined_rds, cache=TRUE, dependson='enrich', cache.lazy=FALSE, eval=FALSE}
 
 obj <- lcdbwf:::compose_results(res_list=res_list,
                                 dds_list=dds_list,
@@ -80,6 +80,25 @@ obj <- lcdbwf:::compose_results(res_list=res_list,
                                 enrich_list=enrich_list)
 
 #saveRDS(obj, file='combined.Rds', compress=FALSE)
+```
+
+```{r remove_homosapiens_useless_info}
+# This recursive function removes the useless Homo sapiens information. 
+#We already know that
+myrapply = function (x, myfun) {
+  if ("enrichResult" %in% class(x)) {
+    return(myfun(x))
+  }
+  if ("list" %in% class(x)) return (purrr::map(x, ~myrapply(., myfun)))
+  stop('myrapply: argument is neither enrichResult or list')
+}
+
+# Define the removeHomo function
+removeHomo <- function(x) {
+  x@result$Description <- gsub(" - Homo sapiens \\(human\\)", "", x@result$Description)
+  return(x)  # Make sure to return x
+}
+enrich_list <- myrapply(enrich_list, removeHomo)
 ```
 
 ```{r functional_enrichment_plots}
@@ -106,19 +125,48 @@ for (name in names(res_list)){
     mdcat("### ", direction, "{.tabset}")
     if (length(enrich_list[[name]][[direction]]) == 0){
         lcdbwf:::mdcat("Too few genes differentially expressed.")
-      next
+        next
     }
     for (ont in names(enrich_list[[name]][[direction]])){
-        lcdbwf:::mdcat("#### ", ont, "{.tabset}")
+        if (length(enrich_list[[name]][[direction]][[ont]]) == 0){
+            lcdbwf:::mdcat("No enriched terms.")
+            next
+        }
+        ont_name <- gsub(":", "—", ont)
+        lcdbwf:::mdcat("#### ", ont_name, "{.tabset}")
 
-    lcdbwf:::mdcat("##### dotplot")
-      print(dotplot_list[[name]][[direction]][[ont]])
-
+      lcdbwf:::mdcat("##### dotplot")
+        if (length(dotplot_list[[name]][[direction]][[ont]]) < 1){
+            lcdbwf:::mdcat("No dotplot figure available")
+        }else{
+            print(dotplot_list[[name]][[direction]][[ont]])
+            savename <- paste(name, direction, ont, "dotplot", sep="_")
+            savename <- paste0(savename, ".pdf")
+            savename <- gsub(":", "—", savename)
+            ggplot2::ggsave(savename, , path="functional-enrichment_files/")
+        }
+      
       lcdbwf:::mdcat("##### emapplot")
-      print(emapplot_list[[name]][[direction]][[ont]])
+        if (length(emapplot_list[[name]][[direction]][[ont]]) < 1){
+            lcdbwf:::mdcat("No emmaplot figure available")
+        }else{
+            print(emapplot_list[[name]][[direction]][[ont]])
+            savename <- paste(name, direction, ont, "emapplot", sep="_")
+            savename <- paste0(savename, ".pdf")
+            savename <- gsub(":", "—", savename)
+            ggplot2::ggsave(savename, , path="functional-enrichment_files/")
+        }
 
       lcdbwf:::mdcat("##### cnetplot")
-      print(cnetplot_list[[name]][[direction]][[ont]])
+        if (length(cnetplot_list[[name]][[direction]][[ont]]) < 1){
+            lcdbwf:::mdcat("No cnetplot figure available")
+        }else{
+            print(cnetplot_list[[name]][[direction]][[ont]])
+            savename <- paste(name, direction, ont, "cnetplot", sep="_")
+            savename <- paste0(savename, ".pdf")
+            savename <- gsub(":", "—", savename)
+            ggplot2::ggsave(savename, , path="functional-enrichment_files/")
+        }
     }
   }
 }
