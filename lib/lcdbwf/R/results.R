@@ -34,6 +34,17 @@ build_results_tabs <- function(res_list, dds_list, config, text){
     res_i <- res_list[[name]][['res']]
     label <- res_list[[name]][['label']]
     genes_to_label <- lcdbwf:::genes_to_label(res_i, n=5, config)
+
+    # Insert gene of interest
+    if (grepl('HNRN', name)){
+        genes_to_label <- c(genes_to_label, 'HNRNPA1')
+    }else if (grepl('FUS', name)){
+        genes_to_label <- c(genes_to_label, 'FUS')
+    }else if (grepl('TARDBP', name)){
+        genes_to_label <- c(genes_to_label, 'TDP43')
+    }else{warning("No relevant gene detected in plot name")}
+
+
     lcdbwf:::mdcat('## ', label, ' {.tabset}')
 
     # TODO:
