@@ -45,6 +45,7 @@ library(reshape)
 library(tibble)
 library(tximport)
 library(UpSetR)
+library(tidyr)
 ```
 
 ```{r config}
@@ -285,11 +286,11 @@ dds_list <- map(lst, lcdbwf:::make_dds, config=config, parallel=config$parallel$
 # under Group-specific condition effects, individuals nested within groups
 # In out case, the pair is like the ind factor, the zone is like the cnd factor,
 # and targeting is like the group factor
-for (group in unique(colData$group)){
-  if (group != 'WT'){
+for (group_param in unique(colData$group)){
+  if (group_param != 'WT'){
     dds1 <- DESeqDataSetFromCombinedFeatureCounts(
       '../data/rnaseq_aggregation/featurecounts.txt',
-        sampletable=colData %>% filter(group == 'HNRNPA1kd'),
+        sampletable=colData %>% filter(group == group_param),
         design=~pair + zone,  # set design simple for now, reformulate later
         subset_counts=TRUE
         )
@@ -308,15 +309,25 @@ for (group in unique(colData$group)){
     # Put the new object in the list
     guide2 <- toString(unique(colData(dds1)$guide_group)[2])
     guide1 <- toString(unique(colData(dds1)$guide_group)[1])
-    list_name <- paste0(group,"_SN_",guide1,"_",guide1,"_interaction")
-    dds_list[[list_name]] = DESeq(dds1)
+    list_name <- paste0(group_param,"_SN_",guide2,"_",guide1,"_interaction")
+    dds_list[[list_name]] <- DESeq(dds1)
   }
 }
 
 ```
 
-```{r dds_diagnostics, results='asis', cache=TRUE, dependson='dds_list', config=config$toggle$dds_diagnostics}
+```{r dds_diagnostics, results='asis', cache=TRUE, dependson=c('dds_list','dds_interactions'), config=config$toggle$dds_diagnostics}
 if (config$toggle$dds_diagnostics){ lcdbwf:::dds_diagnostics(dds_list, text) }
+```
+
+```{r testing, eval=FALSE}
+test_interaction <- results(dds_list$guide_group_SN_sg1128_sg1126_interaction, name="targetingnontargeting.zoneN")
+test_interaction <- as.data.table(as.data.frame(test_interaction), keep.rownames=TRUE)
+
+test <- results(dds_list$zone_sg1126_HNRNPA1kd, contrast=c("zone", "N", "S"))
+
+
+
 ```
 
 # Differential expression {.tabset}
@@ -360,12 +371,12 @@ there are more tabs for the various output.
 
 ```{r results_011, dependson='dds_list', cache=TRUE}
 ##HNRP N contrasts
-contr_01aa_lfc0_trgt_ntrgt_N_HNRNPA1kd <- lcdbwf:::make_results(
+contr_01aa_lfc05_trgt_ntrgt_N_HNRNPA1kd <- lcdbwf:::make_results(
   dds_name="targeting_nontargeting_N_HNRNPA1kd",
   contrast=c("targeting", "targeting", "nontargeting"),
-  lfcThreshold=0,
+  lfcThreshold=0.5,
   type="ashr",
-  label="HNRNPA1 Neurites -- targeting vs nontargeting lfc >0"
+  label="HNRNPA1 Neurites -- targeting vs nontargeting lfc > 0.5"
 )
 ```
 
@@ -380,12 +391,12 @@ contr_01ab_lfc1_trgt_ntrgt_N_HNRNPA1kd <- lcdbwf:::make_results(
 ```
 
 ```{r results_013, dependson='dds_list', cache=TRUE}
-contr_01ba_lfc0_trgt_ntrgt_S_HNRNPA1kd <- lcdbwf:::make_results(
+contr_01ba_lfc05_trgt_ntrgt_S_HNRNPA1kd <- lcdbwf:::make_results(
   dds_name="targeting_nontargeting_S_HNRNPA1kd",
-  lfcThreshold=0,
+  lfcThreshold=0.5,
   contrast=c("targeting", "targeting", "nontargeting"),
   type="ashr",
-  label="HNRNPA1 Soma -- targeting vs nontargeting lfc >0"
+  label="HNRNPA1 Soma -- targeting vs nontargeting lfc > 0.5"
 )
 ```
 
@@ -400,13 +411,13 @@ contr_01bb_lfc1_trgt_ntrgt_S_HNRNPA1kd <- lcdbwf:::make_results(
 ```
 
 ```{r results_021, dependson='dds_list', cache=TRUE}
-contr_02aa_lfc0_trgt_ntrgt_N_FUSkd <- lcdbwf:::make_results(
+contr_02aa_lfc05_trgt_ntrgt_N_FUSkd <- lcdbwf:::make_results(
   # FUS contrasts
   dds_name="targeting_nontargeting_N_FUSkd",
   contrast=c("targeting", "targeting", "nontargeting"),
-  lfcThreshold=0,
+  lfcThreshold=0.5,
   type="ashr",
-  label="FUS Neurites -- targeting vs nontargeting lfc >0"
+  label="FUS Neurites -- targeting vs nontargeting lfc > 0.5"
 )
 ```
 
@@ -421,12 +432,12 @@ contr_02ab_lfc1_trgt_ntrgt_N_FUSkd <- lcdbwf:::make_results(
 ```
 
 ```{r results_023, dependson='dds_list', cache=TRUE}
-contr_02ba_lfc0_trgt_ntrgt_S_FUSkd <- lcdbwf:::make_results(
+contr_02ba_lfc05_trgt_ntrgt_S_FUSkd <- lcdbwf:::make_results(
   dds_name="targeting_nontargeting_S_FUSkd",
-  lfcThreshold=0,
+  lfcThreshold=0.5,
   contrast=c("targeting", "targeting", "nontargeting"),
   type="ashr",
-  label="FUS Soma -- targeting vs nontargeting lfc >0"
+  label="FUS Soma -- targeting vs nontargeting lfc > 0.5"
 )
 ```
 
@@ -442,13 +453,13 @@ contr_02bb_lfc1_trgt_ntrgt_S_FUSkd <- lcdbwf:::make_results(
 
 
 ```{r results_031, dependson='dds_list', cache=TRUE}
-contr_03aa_lfc0_trgt_ntrgt_N_TDP43kd <- lcdbwf:::make_results(
+contr_03aa_lfc05_trgt_ntrgt_N_TDP43kd <- lcdbwf:::make_results(
   # TDP43 contrasts
   dds_name="targeting_nontargeting_N_TDP43kd",
   contrast=c("targeting", "targeting", "nontargeting"),
-  lfcThreshold=0,
+  lfcThreshold=0.5,
   type="ashr",
-  label="TDP43 Neurites -- targeting vs nontargeting lfc >0"
+  label="TDP43 Neurites -- targeting vs nontargeting lfc > 0.5"
 )
 ```
 
@@ -463,12 +474,12 @@ contr_03ab_lfc1_trgt_ntrgt_N_TDP43kd <- lcdbwf:::make_results(
 ```
 
 ```{r results_033, dependson='dds_list', cache=TRUE}
-contr_03ba_lfc0_trgt_ntrgt_S_TDP43kd <- lcdbwf:::make_results(
+contr_03ba_lfc05_trgt_ntrgt_S_TDP43kd <- lcdbwf:::make_results(
   dds_name="targeting_nontargeting_S_TDP43kd",
-  lfcThreshold=0,
+  lfcThreshold=0.5,
   contrast=c("targeting", "targeting", "nontargeting"),
   type="ashr",
-  label="TDP43 Soma -- targeting vs nontargeting lfc >0"
+  label="TDP43 Soma -- targeting vs nontargeting lfc > 0.5"
 )
 ```
 
@@ -487,8 +498,9 @@ contr_03bb_lfc1_trgt_ntrgt_S_TDP43kd <- lcdbwf:::make_results(
 contr_11a_zone_sg1126_HNRNPA1kd <- lcdbwf:::make_results(
   dds_name="zone_sg1126_HNRNPA1kd",
   contrast=c('zone', 'N', 'S'),
+  lfcThreshold=0.5,
   type='ashr',
-  label='zone_sg1126_HNRNPA1kd lfc > 0'
+  label='zone_sg1126_HNRNPA1kd lfc > 0.5'
 )
 ```
 
@@ -496,8 +508,9 @@ contr_11a_zone_sg1126_HNRNPA1kd <- lcdbwf:::make_results(
 contr_11b_zone_sg1128_HNRNPA1kd <- lcdbwf:::make_results(
   dds_name="zone_sg1128_HNRNPA1kd",
   contrast=c('zone', 'N', 'S'),
+  lfcThreshold=0.5,
   type='ashr',
-  label='zone_sg1128_HNRNPA1kd lfc > 0'
+  label='zone_sg1128_HNRNPA1kd lfc > 0.5'
 )
 ```
 
@@ -506,8 +519,9 @@ contr_11b_zone_sg1128_HNRNPA1kd <- lcdbwf:::make_results(
 contr_12a_zone_sg100_FUSkd <- lcdbwf:::make_results(
   dds_name="zone_sg100_FUSkd",
   contrast=c('zone', 'N', 'S'),
+  lfcThreshold=0.5,
   type='ashr',
-  label='zone_sg100_FUSkd lfc > 0'
+  label='zone_sg100_FUSkd lfc > 0.5'
 )
 ```
 
@@ -515,8 +529,9 @@ contr_12a_zone_sg100_FUSkd <- lcdbwf:::make_results(
 contr_12b_zone_sg1152_FUSkd <- lcdbwf:::make_results(
   dds_name="zone_sg1152_FUSkd",
   contrast=c('zone', 'N', 'S'),
+  lfcThreshold=0.5,
   type='ashr',
-  label='zone_sg1152_FUSkd lfc > 0'
+  label='zone_sg1152_FUSkd lfc > 0.5'
 )
 
 ```
@@ -526,8 +541,9 @@ contr_13a_zone_sg100_TDP43kd <- lcdbwf:::make_results(
   # TDP43kd logfc
   dds_name="zone_sg100_TDP43kd",
   contrast=c('zone', 'N', 'S'),
+  lfcThreshold=0.5,
   type='ashr',
-  label='zone_sg100_TDP43kd lfc > 0'
+  label='zone_sg100_TDP43kd lfc > 0.5'
 )
 ```
 
@@ -535,11 +551,41 @@ contr_13a_zone_sg100_TDP43kd <- lcdbwf:::make_results(
 contr_13b_zone_sg200_TDP43kd <- lcdbwf:::make_results(
   dds_name="zone_sg200_TDP43kd",
   contrast=c('zone', 'N', 'S'),
+  lfcThreshold=0.5,
   type='ashr',
-  label='zone_sg200_TDP43kd lfc > 0'
+  label='zone_sg200_TDP43kd lfc > 0.5'
 )
 ```
 
+```{r results_071, dependson='dds_list', cache=TRUE}
+contr_14a_interaction_HNRNPA1kd <- lcdbwf:::make_results(
+  dds_name="HNRNPA1kd_SN_sg1128_sg1126_interaction",
+  contrast=list('targetingtargeting.zoneN', 'targetingnontargeting.zoneN'),
+  lfcThreshold=0.5,
+  type='ashr',
+  label='HNRNPA1kd_targeting_zone_interaction lfc > 0.5'
+)
+```
+
+```{r results_072, dependson='dds_list', cache=TRUE}
+contr_14b_interaction_FUSkd <- lcdbwf:::make_results(
+  dds_name="FUSkd_SN_sg1152_sg100_interaction",
+  contrast=list('targetingtargeting.zoneN', 'targetingnontargeting.zoneN'),
+  lfcThreshold=0.5,
+  type='ashr',
+  label='FUSkd_targeting_zone_interaction lfc > 0.5'
+)
+```
+
+```{r results_073, dependson='dds_list', cache=TRUE}
+contr_14c_interaction_TDP43kd <- lcdbwf:::make_results(
+  dds_name="TDP43kd_SN_sg200_sg100_interaction",
+  contrast=list('targetingtargeting.zoneN', 'targetingnontargeting.zoneN'),
+  lfcThreshold=0.5,
+  type='ashr',
+  label='TDP43kd_targeting_zone_interaction lfc > 0.5'
+)
+```
 
 ```{r assemble_variables, cache=TRUE, config=config$annotation, dependson=knitr::all_labels()[grepl("^results_", knitr::all_labels())]}
 res_list <- lcdbwf:::collect_objects("^contr_[^_]+_")
