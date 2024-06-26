@@ -66,9 +66,9 @@ plotting:
   # For each item in this list, you will get a column of colors along the right
   # side in the clustered heatmap and a PCA plot tab.
   covariates_for_plots:
-    - full_guide_grp
+    - zone
     - group
-    - guide_group
+    - targeting
 
   # Arguments for dotplot_args, emapplot_args, and cnetplot_args are passed to
   # the respective clusterProfiler plotting functions dotplot, emapplot, and
@@ -227,7 +227,6 @@ functional_enrichment:
   # enrichment analysis.
   kind:
     - "OR"
-    - "GSEA"
 
   # Options here are "up", "down" or "changed".
   directions:
@@ -237,5 +236,5 @@ functional_enrichment:
 
   # Any GO terms above these cutoffs will not be reported. Set to 1 if you're
   # fine getting plots even with no statistically significant terms.
-  pvalueCutoff: 0.1 # setting q values may be overly strict, we'll do 0.08 here to be very generous
+  pvalueCutoff: 0.05 # setting q values may be overly strict, we'll do 0.08 here to be very generous
   qvalueCutoff: 1
