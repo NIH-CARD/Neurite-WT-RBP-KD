@@ -74,11 +74,11 @@ plotting:
   # the respective clusterProfiler plotting functions dotplot, emapplot, and
   # cnetplot. Any arguments accepted by those functions can be added here.
   dotplot_args:
-    showCategory: 20
+    showCategory: 18
     color: p.adjust
     size: NULL
     split: NULL
-    font.size: 12
+    font.size: 8
     x: GeneRatio
 
   emapplot_args:

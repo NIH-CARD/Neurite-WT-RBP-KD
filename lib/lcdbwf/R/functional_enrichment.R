@@ -42,7 +42,8 @@ run_enricher <- function(res_list, ontology_list, config,
               direction=direction,
               TERM2GENE=ontology_list[['term2gene']][[ont]],
               TERM2NAME=ontology_list[['term2name']][[ont]],
-              config=config
+              config=config,
+              kind=config$functional_enrichment$kind
             )
             enrich_res
         }, BPPARAM=BiocParallel::MulticoreParam(cores))
@@ -112,7 +113,6 @@ enrich_test <- function(res, TERM2GENE, TERM2NAME, config, direction, kind='OR',
   } else {
     lfc_thresh <- config$main$lfc_thresh
   }
-
   if (kind == "OR"){
     genes <- get_sig(
       res$res,
