@@ -1,0 +1,14 @@
+{
+    "salmon_version": "1.4.0",
+    "index": "/SAN/vyplab/vyplab_reference_genomes/salmon/human_v42/GRCh38/full/gencode_v42.kmer_31",
+    "libType": "A",
+    "mates1": "/SAN/vyplab/alm_projects/neurite_veronica/WT/fastp_trimmed/soma3_soma3_1.trimmed.fastq.gz",
+    "mates2": "/SAN/vyplab/alm_projects/neurite_veronica/WT/fastp_trimmed/soma3_soma3_2.trimmed.fastq.gz",
+    "geneMap": "/SAN/vyplab/vyplab_reference_genomes/annotation/human/GRCh38/gencode.v42.annotation.gtf",
+    "threads": "1",
+    "gcBias": [],
+    "seqBias": [],
+    "numBootstraps": "50",
+    "output": "/SAN/vyplab/alm_projects/neurite_veronica/WT/salmon_quant/soma3",
+    "auxDir": "aux_info"
+}

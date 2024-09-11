@@ -1,0 +1,22 @@
+{
+    "read_files": "[ /SAN/vyplab/alm_projects/neurite_veronica/WT/fastp_trimmed/neurite2_neurite2_1.trimmed.fastq.gz, /SAN/vyplab/alm_projects/neurite_veronica/WT/fastp_trimmed/neurite2_neurite2_2.trimmed.fastq.gz]",
+    "expected_format": "ISR",
+    "compatible_fragment_ratio": 1.0,
+    "num_compatible_fragments": 7467969,
+    "num_assigned_fragments": 7467969,
+    "num_frags_with_concordant_consistent_mappings": 7225130,
+    "num_frags_with_inconsistent_or_orphan_mappings": 243770,
+    "strand_mapping_bias": 0.00008594262381861761,
+    "MSF": 0,
+    "OSF": 0,
+    "ISF": 621,
+    "MSR": 0,
+    "OSR": 0,
+    "ISR": 7225130,
+    "SF": 135334,
+    "SR": 107815,
+    "MU": 0,
+    "OU": 0,
+    "IU": 0,
+    "U": 0
+}
