@@ -1,0 +1,449 @@
+---
+title: "Splicing analysis"
+output: html_notebook
+---
+
+# Preparation
+```{r load-libs}
+conflicted::conflicts_prefer(dplyr::filter)
+conflicted::conflicts_prefer(dplyr::rename)
+conflicted::conflicts_prefer(dplyr::select)
+conflicted::conflicts_prefer(GenomicRanges::setdiff)
+suppressMessages({
+  library(data.table)
+  library(dplyr)
+  library(tidyr)
+  library(tibble) 
+  library(ggplot2)
+  library(ggsci)
+  library(ggsignif)
+  library(biomaRt)
+  library(tximport)
+  library(org.Hs.eg.db)
+  library(BSgenome.Hsapiens.UCSC.hg38)
+  library(sleuth)
+  library(pheatmap)
+  library(transite)
+  library(Biostrings)
+  library(DESeq2)
+  library(GenomicFeatures)
+  library(IsoformSwitchAnalyzeR)
+})
+ensembl_dict <- NULL
+
+mart <- biomaRt::useMart(biomart = "ENSEMBL_MART_ENSEMBL", dataset = "hsapiens_gene_ensembl", host = 'ensembl.org')
+t2g <- biomaRt::getBM(attributes = c("ensembl_transcript_id_version", "ensembl_gene_id",  "external_gene_name", "transcript_biotype", "transcript_length"), mart = mart)
+t2g <- dplyr::rename(t2g, target_id = ensembl_transcript_id_version, ens_gene = ensembl_gene_id, ext_gene = external_gene_name)
+
+t2g_filt <- t2g %>% 
+  dplyr::filter(!(transcript_biotype %in% c("rRNA", "rRNA_pseudogene", "pseudogene", "Mt_tRNA", "Mt_rRNA"))) %>% 
+  filter(!grepl("7SL", ext_gene)) %>% 
+  filter(!grepl("^MT-", ext_gene)) %>% 
+  filter(ext_gene != "") %>% 
+  dplyr::select(-transcript_biotype) %>% 
+  dplyr::select(-transcript_length)
+filter_ids <- t2g_filt$target_id
+```
+
+# Style
+```{r}
+compartments_cols <- c("Both" = "black", "Neurites" = "royalblue", "Whole cell" = "chocolate1")
+```
+
+# IsoformSwitchAnalyzeR
+
+```{r}
+salmonQuant <- importIsoformExpression("data/wt_salmon_quant/")
+abundance <- salmonQuant$abundance 
+rownames(abundance) <- abundance$isoform_id
+abundance <- abundance[filter_ids,]
+abundance <- na.omit(abundance)
+counts <- salmonQuant$counts 
+rownames(counts) <- counts$isoform_id
+counts <- counts[filter_ids,]
+counts <- na.omit(counts)
+
+myDesign <- data.frame(
+    sampleID = stringr::str_sort(colnames(abundance)[-1], numeric = TRUE),
+    condition = factor(c("neurite", "neurite", "neurite","neurite",
+                  "soma","soma", "soma", "soma"), levels=c("soma", "neurite"))
+)
+
+aSwitchList_wt <- importRdata(
+    isoformCountMatrix   = counts,
+    isoformRepExpression = abundance,
+    designMatrix         = myDesign,
+    isoformExonAnnoation = "gencode.v44.annotation.gtf",
+    ignoreAfterPeriod=T,
+    showProgress = T
+)
+```
+
+
+```{r}
+switchListFilteredStrict_wt <- preFilter(
+    switchAnalyzeRlist = aSwitchList_wt,
+    geneExpressionCutoff = 5,
+    isoformExpressionCutoff = 1,
+    removeSingleIsoformGenes = TRUE
+)
+
+switchListAnalyzed_wt <- isoformSwitchTestDEXSeq(
+    switchAnalyzeRlist = switchListFilteredStrict_wt,
+    reduceToSwitchingGenes=TRUE
+)
+
+# Summarize switching features
+extractSwitchSummary(switchListAnalyzed_wt)
+
+switchListAnalyzed_wt <- analyzeAlternativeSplicing(
+    switchAnalyzeRlist = switchListAnalyzed_wt,
+    quiet=F
+)
+
+switchListAnalyzedSeq_wt <- extractSequence(
+    switchListAnalyzed_wt, 
+    genomeObject =BSgenome.Hsapiens.UCSC.hg38::BSgenome.Hsapiens.UCSC.hg38,
+    pathToOutput = 'wt_switch_analyzer/',
+    writeToFile=T # to avoid output when running this example data
+)
+```
+
+```{r}
+switchListAnalyzed_wt <- analyzeCPC2(
+    switchAnalyzeRlist   = switchListAnalyzed_wt,
+    pathToCPC2resultFile = "wt_switch_analyzer/result_cpc2.txt",
+    codingCutoff         = 0.5, # the coding potential cutoff we suggested for human
+    removeNoncodinORFs   = TRUE   # because ORF was predicted de novo
+)
+
+splicingEnrichment_wt <- extractSplicingEnrichment(
+    switchListAnalyzed_wt,
+    splicingToAnalyze='all',
+    returnResult=TRUE,
+    returnSummary=TRUE
+)
+
+orfSwitchList_wt <- analyzeNovelIsoformORF(switchAnalyzeRlist = switchListFilteredStrict_wt,
+                                         analysisAllIsoformsWithoutORF = TRUE, 
+                genomeObject = BSgenome.Hsapiens.UCSC.hg38::BSgenome.Hsapiens.UCSC.hg38,
+                                         showProgress = TRUE) 
+
+isoforms_wt <- na.omit(switchListAnalyzedSeq_wt$orfAnalysis)$isoform_id
+switchListAnalyzedSeqFilt_wt <- subsetSwitchAnalyzeRlist(
+            switchListAnalyzedSeq_wt,
+            switchListAnalyzedSeq_wt$isoformFeatures$isoform_id %in% isoforms_wt
+        )
+
+consequencesOfInterest <- c('intron_retention','NMD_status', 'isoform_length', 'last_exon', 'isoform_seq_similarity', 'ORF_length','5_utr_length','3_utr_length','isoform_seq_similarity','5_utr_seq_similarity','3_utr_seq_similarity')
+
+switchListAnalyzedFilt_wt <- analyzeSwitchConsequences(
+    switchListAnalyzedSeqFilt_wt,
+    consequencesToAnalyze = consequencesOfInterest, 
+    dIFcutoff = 0.1, 
+    showProgress=T
+)
+
+extractSwitchSummary(switchListAnalyzed_wt, dIFcutoff = 0.1, filterForConsequences = FALSE)
+extractSwitchSummary(switchListAnalyzedFilt_wt, dIFcutoff = 0.1, filterForConsequences = TRUE)
+
+extractSplicingSummary(
+    switchListAnalyzedSeqFilt_wt,
+    asFractionTotal = FALSE,
+    plotGenes=T
+)
+```
+## UPF1
+```{r}
+nmd_transcripts <- switchListAnalyzedFilt_wt$switchConsequence %>% filter(switchConsequence=="NMD sensitive") %>% pull(isoformUpregulated)
+non_nmd_transcripts <- switchListAnalyzedFilt_wt$switchConsequence %>% filter(switchConsequence=="NMD sensitive") %>% pull(isoformDownregulated)
+
+nmd_insens_transcripts <- switchListAnalyzedFilt_wt$switchConsequence %>% filter(switchConsequence=="NMD insensitive") %>% pull(isoformUpregulated)
+t2g$transcript_id <- sub("\\.\\d+$", "",t2g$target_id)
+cat(unique(t2g %>% filter(transcript_id %in% nmd_transcripts) %>% pull(ext_gene)), sep="\n")
+cat(unique(t2g %>% filter(transcript_id %in% nmd_insens_transcripts) %>% pull(ext_gene)), sep="\n")
+```
+
+```{r}
+upf1_res <- read.csv("data/upf1_deseq.csv")
+upf1_res <- upf1_res %>%
+  mutate(nmd_status = case_when(
+    row %in% nmd_transcripts ~ "NMD sensitive",
+    row %in% non_nmd_transcripts ~ "NMD insensitive",
+    TRUE ~ "Other transcripts"
+  ))
+
+ggplot(upf1_res, aes(x=nmd_status, y=log2FoldChange, fill=nmd_status)) +
+  geom_boxplot(outlier.shape = NA) +
+  ylim(-5.5, 5.5) +
+  labs(title="",
+       x="",
+       y="Log2 Fold Change after UPF1 KD",
+       fill="NMD Status") +
+  theme_minimal() +
+  geom_signif(comparisons = list(c("NMD sensitive", "NMD insensitive"), 
+                                 c("NMD sensitive", "Other transcripts"),  
+                                 c("NMD insensitive", "Other transcripts")), 
+              y_position = c(1.5,2,2.5), tip_length =0.01,
+              map_signif_level=TRUE) +
+      cowplot::theme_cowplot() + scale_fill_aaas(guide="none") 
+```
+
+# QAPA
+```{r}
+df_qapa <- read.table("data/dexseq_apa.NeurvsSoma.results.processed.tsv", quote = NULL, header = T)
+
+prox_utr_plot <- ggplot(df_qapa %>% filter(Pas_Number == 1), 
+       aes(x = log2fold_neurite_soma)) +
+  geom_density(color = "black", fill = "magenta", alpha = 0.4, size = 1.) +
+  xlab("Log2FC Neurites vs Whole cell") +
+  ylab("Density") + 
+  geom_vline(xintercept = c(0, 0), col = "gray", linetype = 'dashed') +
+  cowplot::theme_cowplot()
+```
+
+```{r}
+df_qapa <- df_qapa %>% mutate(
+  site = ifelse(Pas_Number>1, "Distal UTR", "Proximal UTR")
+)
+utr_boxplot <- ggplot(df_qapa %>% filter(Pas_Number == 1 | Pas_Number == Num_Events), 
+       aes(x = log2fold_neurite_soma, y = site, color = site)) + 
+  geom_boxplot() +
+  scale_color_cosmic(guide="none") +
+  xlab("Log2FC Neurites vs Whole cell") +
+  ylab("") + 
+  geom_vline(xintercept = c(0, 0), col = "gray", linetype = 'dashed') +
+  #xlim(-10,10) +
+  cowplot::theme_cowplot()
+```
+
+# Figure 3
+```{r}
+plot_isa_consequences <- function(switchListAnalyzedFilt) {
+  #switchListAnalyzedFilt<-switchListAnalyzedFilt_wt
+  extractSplicingSummary(
+      switchListAnalyzedFilt,
+      asFractionTotal = FALSE,
+      plotGenes=T
+  )
+  consequences <- switchListAnalyzedFilt$switchConsequence 
+  consequences$combined_conditions <- paste(consequences$condition_1, consequences$condition_2, sep = "-")
+  unique(consequences$combined_conditions)
+  consequences <- consequences %>% dplyr::filter(isoformsDifferent == T)
+  consequences_not_for_plot <- c( "ORF is longer",  "ORF is shorter", "Intron retention switch", "Last exon more upstream", "Last exon more downstream" )
+  consequences_for_plot <- c("Length gain", "Length loss", "3UTR is longer", "3UTR is shorter", "5UTR is longer", "5UTR is shorter", "Intron retention loss", "Intron retention gain", "NMD sensitive", "NMD insensitive")
+  consequences <- consequences %>% dplyr::filter(switchConsequence %in% consequences_for_plot)
+  table(consequences$switchConsequence)
+  consequences2 <- consequences %>% dplyr::filter(!(featureCompared %in% c("3_utr_seq_similarity", "5_utr_seq_similarity", "isoform_seq_similarity")))
+    
+  consequences <- consequences %>% dplyr::filter(combined_conditions %in% c(
+                                                                            "neurite-soma",
+                                                                            "soma-neurite"
+                                                                            ))
+  consequences <- consequences %>%
+    mutate(switchConsequence = case_when(
+      switchConsequence == "Intron retention gain" ~ "IR gain",
+      switchConsequence == "Intron retention loss" ~ "IR loss",
+      TRUE ~ switchConsequence
+    ))  
+  consequences$switchConsequence <- factor(consequences$switchConsequence, levels = c("Length gain", "Length loss", "3UTR is longer", "3UTR is shorter", "5UTR is longer", "5UTR is shorter", "IR loss", "IR gain", "NMD sensitive", "NMD insensitive"))
+  ggplot(consequences, aes(x = switchConsequence, fill = combined_conditions)) +
+    geom_bar(position = "dodge") +
+    labs(title = "",
+         x = "Isoform Switch Consequences ",
+         y = "Number of switches",
+         fill = "Comparisons")+
+    #facet_wrap(~ combined_conditions, nrow = 2) +
+      cowplot::theme_cowplot() + scale_fill_aaas() +
+    theme(legend.position = "top",  # Moves the legend to the top
+        legend.title = element_blank())
+}
+```
+
+```{r}
+switch_analyzer_plot <- plot_isa_consequences(switchListAnalyzedFilt_wt)
+utr_plot <- cowplot::plot_grid(utr_boxplot, prox_utr_plot,
+                   nrow=1,
+                   labels = c('B','C'), label_size = 16)
+
+cowplot::plot_grid(switch_analyzer_plot,
+                   utr_plot,
+                   nrow=2,
+                   labels = c('A',''), label_size = 16)
+```
+
+# Sleuth
+```{r}
+files <- list.files("data/wt_salmon_quant", pattern="abundance.h5$", full.names=TRUE,recursive = TRUE)
+files <- stringr::str_sort(files, numeric = TRUE)
+
+metadata <- data.frame(
+  cell = c(rep("neurite", 4),rep("soma", 4)),
+  files = files,
+  sample = c("neurite1","neurite2","neurite3","neurite4","soma1","soma2","soma3","soma4")
+) 
+s2c <- data.frame(sample = metadata$sample, 
+               condition = as.factor(metadata$cell), 
+               path = dirname(files), 
+               stringsAsFactors = FALSE)
+s2c$condition <- relevel(s2c$condition, ref = "soma")
+
+so <- sleuth_prep(s2c, normalize = FALSE) ## this just reads in the raw data
+counts <- sleuth_to_matrix(so, "obs_raw", "est_counts") ## this gets a matrix of counts
+filter <- apply(counts, 1, basic_filter) ## this applies the basic filter to the counts
+txfilter <- filter_ids[which(filter_ids %in% names(filter)[filter])] 
+
+so <- sleuth_prep(s2c, ~condition, target_mapping = t2g, 
+                   filter_target_id=txfilter,
+                   aggregation_column = NULL, 
+                   gene_mode = FALSE,
+                   extra_bootstrap_summary = TRUE, 
+                   read_bootstrap_tpm = TRUE) 
+so <- sleuth_fit(so, ~condition, 'full')
+so <- sleuth_fit(so, ~1, 'reduced')
+so <- sleuth_wt(so, 'conditionneurite', 'full')
+
+oe <- sleuth_wt(so, which_beta = "conditionneurite")
+res_sleuth_wt <- sleuth_results(oe, test_type = "wt",
+                            test = "conditionneurite", 
+                            pval_aggregate = FALSE,
+                            show_all = TRUE)
+```
+
+# Transite
+```{r}
+all_motifs <- transite::get_motifs()
+
+genome <- BSgenome.Hsapiens.UCSC.hg38::BSgenome.Hsapiens.UCSC.hg38
+genome_strings <- lapply(seqnames(genome), function(chrom) {
+  as.character(genome[[chrom]])
+})
+names(genome_strings) <- seqnames(genome)
+
+extract_sequence <- function(chrom, start, end, strand) {
+  if (!grepl("^chr", chrom)) {
+    chrom <- paste0("chr", chrom)
+  }
+  if (end < start) {sequence <- substring(genome_strings[[chrom]], end, start)}
+  else {sequence <- substring(genome_strings[[chrom]], start, end)}
+  if (strand == "-" | strand == -1 | end < start) {
+    sequence <- as.character(reverseComplement(DNAString(sequence)))
+  }
+  return(sequence)
+}
+```
+
+```{r}
+all_transcripts <- res_sleuth_wt$target_id
+all_transcripts <- sub("\\.\\d+$", "", all_transcripts)
+
+ensembl_dict <- getBM(attributes = c('ensembl_transcript_id', 
+                                     '3_utr_start', '3_utr_end', 'chromosome_name', 'strand'),
+           filters = 'ensembl_transcript_id', 
+           values=all_transcripts,
+           mart = mart)
+ensembl_dict <- na.omit(ensembl_dict)
+```
+
+```{r}
+res_sleuth_wt$target_id <- sub("\\.\\d+$", "", res_sleuth_wt$target_id)
+  
+res_sleuth_wt <- res_sleuth_wt %>% merge(
+  ensembl_dict,
+  by.x="target_id", by.y="ensembl_transcript_id") %>% 
+  group_by(target_id) %>% 
+  slice_head(n=1)
+
+res_sleuth_wt_pos <- res_sleuth_wt %>% filter(b > 5 & qval < 0.05)
+res_sleuth_wt_neg <- res_sleuth_wt %>% filter(b < -5 & qval < 0.05)
+res_sleuth_wt_bg <- res_sleuth_wt %>% filter(abs(b) < 0.05 & qval > 0.05)
+
+res_sleuth_wt_bg$utr3_seq <- mapply(extract_sequence, res_sleuth_wt_bg$chromosome_name,
+             as.numeric(res_sleuth_wt_bg$`3_utr_start`), 
+             as.numeric(res_sleuth_wt_bg$`3_utr_end`), 
+             res_sleuth_wt_bg$strand) 
+res_sleuth_wt_bg %>% 
+     filter(!is.na(utr3_seq) & ext_gene != "" & !is.na(b)) %>%
+     arrange(b) %>%
+     distinct()
+
+background_set <- gsub("T", "U", res_sleuth_wt_bg$utr3_seq)
+background_set <- toupper(background_set)
+names(background_set) <- res_sleuth_wt_bg$ext_gene
+
+add_utr_seq <- function(df) {
+  df$utr3_seq <- mapply(extract_sequence, df$Chr,
+            as.numeric(df$UTR3.Start), 
+            as.numeric(df$UTR3.End), 
+            df$Strand)
+  df %>% 
+    filter(!is.na(utr3_seq) & ext_gene != "" & !is.na(b)) %>%
+    arrange(b) %>%
+    distinct()
+}
+```
+
+
+```{r}
+utr_pct_cutoff <- 20
+
+df_utr_expr <- read.table("data/differential_apa_wt.pau_results.txt", header = T, sep="\t")
+colnames(df_utr_expr) <- gsub("\\.PAU","", colnames(df_utr_expr))
+colnames(df_utr_expr) <- gsub("X","", colnames(df_utr_expr))
+
+sel_samples <- c("neurite1","neurite2","neurite3","neurite4")
+utrs_pct_neur <- df_utr_expr %>% select(Gene_Name, Chr, UTR3.Start, UTR3.End, Strand, all_of(sel_samples))
+utrs_pct_neur$average <- rowMeans(utrs_pct_neur %>% select(all_of(sel_samples)))
+utrs_pct_neur <- utrs_pct_neur %>% filter(average >= utr_pct_cutoff)
+df_deseq_neur <- res_sleuth_wt_pos %>% merge(
+  utrs_pct_neur %>% select(-all_of(sel_samples)),
+  by.x="ext_gene", by.y="Gene_Name")
+df_deseq_neur <- add_utr_seq(df_deseq_neur)
+foreground_set_neur <- gsub("T", "U", df_deseq_neur$utr3_seq)
+foreground_set_neur <- toupper(foreground_set_neur)
+names(foreground_set_neur) <- df_deseq_neur$ext_gene
+
+sel_samples <- c("soma1","soma2","soma3","soma4")
+utrs_pct_soma <- df_utr_expr %>% select(Gene_Name, Chr, UTR3.Start, UTR3.End, Strand, all_of(sel_samples))
+utrs_pct_soma$average <- rowMeans(utrs_pct_soma %>% select(all_of(c(sel_samples))))
+utrs_pct_soma <- utrs_pct_soma %>% filter(average >= utr_pct_cutoff)
+df_deseq_soma <- res_sleuth_wt_neg %>% merge(
+  utrs_pct_soma %>% select(-all_of(sel_samples)),
+  by.x="ext_gene", by.y="Gene_Name")
+df_deseq_soma <- add_utr_seq(df_deseq_soma)
+foreground_set_soma <- gsub("T", "U", df_deseq_soma$utr3_seq)
+foreground_set_soma <- toupper(foreground_set_soma)
+names(foreground_set_soma) <- df_deseq_soma$ext_gene
+motifs <- transite::get_motifs()
+```
+
+
+```{r}
+transite_real_utrs_neur <- run_matrix_tsma(list(foreground_set_neur), background_set, 
+                motifs = motifs, 
+                n_cores = 12, cache = F)
+transite_real_utrs_soma <- run_matrix_tsma(list(foreground_set_soma), background_set, 
+                motifs = motifs, 
+                n_cores = 12, cache = F)
+```
+
+```{r}
+motif_rank_plot <- function(df) {
+  df <- df[order(df$enrichment, decreasing = TRUE), ]
+  df <- df %>% filter(adj_p_value < 0.05)
+  
+  df$motif_rank <- seq_along(df$enrichment)
+  
+  ggplot(df, aes(x = motif_rank, y = enrichment, color = adj_p_value)) +
+    geom_point(size = 3) +
+    scale_color_gradient(low = "orange", high = "darkred") +  # Adjust colors as needed
+    labs(x = "RBP Motif Rank", y = "Enrichment", color = "Adjusted p-value") +
+    theme(axis.text.x = element_text(angle = 70, hjust = 1)) +
+    geom_text(data = df %>% filter(enrichment > 1.5), aes(label = motif_rbps), color="black", hjust = -0.1,  size = 4) + 
+  cowplot::theme_cowplot()
+}
+
+motif_rank_plot(transite_real_utrs_neur$enrichment_dfs[[1]])
+motif_rank_plot(transite_real_utrs_soma$enrichment_dfs[[1]])
+```
+
