@@ -44,3 +44,13 @@ patterns_by_aggregate:
   merged_bigwig: 'data/rnaseq_aggregation/merged_bigwigs/{merged_bigwig_label}.bigwig'
 samtools:
   idxstats: 'data/rnaseq_samples/{sample}/idxstat_{sample}.txt'
+rnaseqc:
+  metrics: 'data/rnaseq_samples/{sample}/{sample}.cutadapt.markdups.bam.metrics.tsv'
+  exons: 'data/rnaseq_samples/{sample}/{sample}.cutadapt.markdups.bam.exon_reads.gct'
+  gene_reads: 'data/rnaseq_samples/{sample}/{sample}.cutadapt.markdups.bam.gene_reads.gct'
+  gene_tpm: 'data/rnaseq_samples/{sample}/{sample}.cutadapt.markdups.bam.gene_tpm.gct'
+  fragmentSizes: 'data/rnaseq_samples/{sample}/{sample}.cutadapt.markdups.bam.gene_fragments.gct'
+  coverage: 'data/rnaseq_samples/{sample}/{sample}.cutadapt.markdups.bam.exon_cv.tsv'
+  log: 'data/rnaseq_samples/{sample}/logs/{sample}.cutadapt.markdups.bam.rnaseqc.log'
+rnaseqc_output:
+  directory: 'data/rnaseq_samples/{sample}/'

@@ -45,6 +45,7 @@ library(reshape)
 library(tibble)
 library(tximport)
 library(UpSetR)
+library(biomaRt)
 library(tidyr)
 library(ggpubr)
 ```
@@ -164,6 +165,12 @@ for(group in config$plotting$covariates_for_plots){
 ```{r pca, results='asis', cache=TRUE, config=c(text$qc$pca, config$plotting$covariates_for_plots), dependson='dds_initial'}
 # Plot PCA plots, optionally tabbed with different factors colored, for QC.
 vsd_no_wt <- vsd[,vsd$group != 'WT']
+library(data.table)
+library(ggplot2)
+library(ggthemes)
+library(viridis)
+library(pheatmap)
+library(foreach)
 #lcdbwf:::mdcat('#### NO WT')
 for(group in config$plotting$covariates_for_plots){
     lcdbwf:::mdcat('#### ', paste(group, sep=", "))
@@ -171,6 +178,61 @@ for(group in config$plotting$covariates_for_plots){
     print(htmltools::tagList(ggplotly(p)))
 }
 
+```
+
+```{r snoheatmap]
+vsd_wt_only <- vsd[,vsd$group == 'WT']
+counts <- assay(vsd_wt_only)
+counts_dt = as.data.table(counts, keep.rownames=TRUE)
+
+# bring in sno for each 
+o <- foreach(filename=list.files(pattern='*.csv', path='snoRNAs', full.names=TRUE),  combine='rbind') %do% {
+    dat <- fread(filename)
+    filename.split <- unlist(strsplit(filename, split='_|\\.'))
+    grp <- filename.split[2]
+    treatment <- filename.split[3]
+    dat <- melt(dat, measure.vars=colnames(dat)[-c(1)], variable.name='sample')
+    dat[, 'grp' := grp]
+    dat[, 'treatment' := treatment]
+    setnames(dat, 'V1', 'gene')
+    return(dat[])
+}
+
+setnames(counts_dt, 'rn', 'ENSEMBL')
+dat_2 <- melt(counts_dt, measure.vars=colnames(counts_dt)[-c(1)], variable.name='sample')
+
+
+# Prepare for name conversion
+ensembl <- useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+
+# Query to get gene symbols
+genes <- getBM(attributes = c('ensembl_gene_id', 'hgnc_symbol'),
+               filters = 'ensembl_gene_id',
+               values = counts_dt$ENSEMBL,
+               mart = ensembl)
+
+dat_2 <- merge(dat_2, genes, by.x='ENSEMBL', by.y='ensembl_gene_id', all.x=FALSE, all.y=FALSE)
+
+dat_2[sample %like% 'N', zone := 'Neurite']
+dat_2[sample %like% 'S', zone := 'Soma']
+dat_2[, sample := tstrsplit(sample, split='_')[3]]
+dat_2[, sample := as.numeric(sample)]
+dat_2[, sample := factor(sample)]
+
+# Ensure all rows have Neurite or Soma labeled zone
+stopifnot(nrow(dat_2[is.na(zone)]) == 0)
+
+dat_2[, 'log10Value' := log10(value+1)]
+# Merge to get the snoRNAs. 
+unique_genes_to_grab <- unique(o[[1]]$gene)
+#pare down to relevant columns
+symbol_dt <- symbol_dt[c('gene', 'ensembl_gene_id')]
+final_dat <- merge(dat_2, symbol_dt, by.x="ENSEMBL", by.y="ensembl_gene_id", all.x=FALSE, all.y=TRUE)
+
+gene_superset <- rev(sort(unique(final_dat$gene)))
+final_dat[, gene := factor(gene, levels=gene_superset)]
+
+fwrite(dat_2, "WT_data.csv")
 ```
 
 ```{r sizefactors, results='asis', eval=!(config$toggle$salmon | config$toggle$kallisto)}

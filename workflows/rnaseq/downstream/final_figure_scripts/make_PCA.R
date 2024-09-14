@@ -57,13 +57,13 @@ make_PCA <- function(first_PC, second_PC, group_name, my_vsd){
   ggsave(paste0("PCA_plots/cory_style_final/", group_name, "_", "zone_trgt_", "pca_",PC_first, "_", PC_second,".pdf"), plot=p)
 }
 
+config <- lcdbwf:::load_config('config.yaml')
 
 parallel <- config$parallel$parallel
 if (config$parallel$parallel){
     register(MulticoreParam(config$parallel$cores))
 }
 
-config <- lcdbwf:::load_config('config.yaml')
 
 colData <- read.table(config$main$sampletable, sep='\t', header=TRUE, stringsAsFactors=FALSE)
 
@@ -85,11 +85,11 @@ colData$pair <- factor(colData$pair)
 colData_init <- colData
 
 dds_initial <- lcdbwf:::make_dds(
-  list(sampletable=colData_init, design=~1, subset_counts=TRUE),
+  list(sampletable=colData_init, design=~pair + zone, subset_counts=FALSE),
   config=config,
   parallel=config$parallel$parallel
 )
-vsd <- varianceStabilizingTransformation(dds_initial, blind=TRUE)
+vsd <- varianceStabilizingTransformation(dds_initial, blind=FALSE)
 
 vsd$fillcolor[(vsd$group == 'FUSkd')] <- '#FF89D7'
 vsd$fillcolor[(vsd$group == 'HNRNPA1kd')] <- '#0095FF'

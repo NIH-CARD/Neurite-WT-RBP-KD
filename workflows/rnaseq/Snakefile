@@ -56,7 +56,9 @@ final_targets = utils.flatten((
     utils.flatten(c.targets['preseq']),
     utils.flatten(c.targets['rseqc']),
     utils.flatten(c.targets['collectrnaseqmetrics']),
-    utils.flatten(c.targets['bigwig']),
+    utils.flatten(c.targets['rnaseqc'])
+    #utils.flatten(c.targets['bigwig']),
+
 ))
 
 if config.get('merged_bigwigs', None):
@@ -700,7 +702,8 @@ rule multiqc:
             utils.flatten(c.targets['fastq_screen']) +
             utils.flatten(c.targets['preseq']) +
             utils.flatten(c.targets['collectrnaseqmetrics']) +
-            utils.flatten(c.targets['samtools'])
+            utils.flatten(c.targets['samtools']) +
+            utils.flatten(c.targets['rnaseqc'])
         ),
         config='config/multiqc_config.yaml'
     output: c.targets['multiqc']
@@ -913,6 +916,38 @@ rule kallisto:
             '&> {log}'
         )
 
+rule gtf_collapse:
+    input:
+        annotation=c.refdict[c.organism][config['gtf']['tag']]['annotation']
+    output:
+        gtf=temporary('collapsed_gtf.gtf')
+    shell:
+        'python collapse_annotation.py {input.annotation} {output.gtf} --collapse_only'
+
+
+rule rnaseqc:
+    """
+    Run the rnaseqc package to mirror Alla's contribution to go in the multiqc file
+    """
+    input: 
+        bam=c.patterns['markduplicates']['bam'],
+        gtf='collapsed_gtf.gtf',
+    output: 
+        metrics=c.patterns['rnaseqc']['metrics'],
+        exons=c.patterns['rnaseqc']['exons'],
+        gene_reads=c.patterns['rnaseqc']['gene_reads'],
+        gene_tpm=c.patterns['rnaseqc']['gene_tpm'],
+        fragmentSizes=c.patterns['rnaseqc']['fragmentSizes'],
+        coverage=c.patterns['rnaseqc']['coverage'],
+    params:
+        directory=c.patterns['rnaseqc_output']['directory']
+    singularity: "docker://gcr.io/broad-cga-aarong-gtex/rnaseqc:latest"
+    log: c.patterns['rnaseqc']['log']
+    # Changing the strandedness does change how the statistics turn out. 
+    # Currently RF and not set give the highest efficiencies
+    shell:
+        'rnaseqc --verbose --stranded=rf {input.gtf} {input.bam} {params.directory} &> {log}'
+
 rule rseqc_infer_experiment:
     """
     Infer strandedness of experiment
@@ -1097,4 +1132,3 @@ rule rnaseq_rmarkdown:
         '> {log} 2>&1'
         # [TEST_SETTINGS -1]
 
-# vim: ft=python
