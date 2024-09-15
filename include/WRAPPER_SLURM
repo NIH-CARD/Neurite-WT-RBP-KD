@@ -35,6 +35,7 @@ fi
     -j 999 \
     --use-conda \
     --configfile config/config.yaml \
+    --use-singularity \
     $PROFILE_CMD \
     "$@"
     ) > "Snakefile.log" 2>&1
