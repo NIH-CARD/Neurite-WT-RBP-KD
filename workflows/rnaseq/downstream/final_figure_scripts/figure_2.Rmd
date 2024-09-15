@@ -119,9 +119,11 @@ dt_colData_WT$cellular_zone <- factor(dt_colData_WT$full_guide_grp ,levels=c(som
 # Just like lcdb_wf ignore the version number
 # Use the full version for calculations outside of just one group
 se <- tximeta(dt_colData_WT, ignoreTxVersion=TRUE, txOut=TRUE)
+gse <- summarizeToGene(se)
 
 # Rename for the statistical portion
 y <- se
+yg <- gse
 
 library(DESeq2)
 library(ggplot2)

@@ -13,6 +13,62 @@ plotPCA.ly <- function(rld, intgroup){
   return(p)
 }
 
+#' Plots a PCA plot given a swish input for this data specifically
+#'
+#' @param txiset DESeqTransform object from varianceStabilizingTransformation()
+#' @param PC1 and @param PC2 raw number indicating the PC to place on the x and y axis, respectively.
+#' e.g. PC1 <- 1
+#' @param variable a single string or vector of strings of the variables to examine in the PCA
+#' @param contrast_name what to name the contrast in the title. Should be set at the beginning of the code
+#' @param extra_info Any other info to include in the title or output, for example, whether it is a gene or transcript PCA
+createSwishPCA <- function(txiset, PC1, PC2, variable, contrast_name, extra_info) {
+     ya <- DESeqDataSet(txiset, design = ~1)
+
+       # Ensure 'ya' is a DESeqDataSet object
+      if (!inherits(ya, "DESeqDataSet")) {
+        stop("Input 'ya' must be a DESeqDataSet object.")
+      }
+    vsd <- varianceStabilizingTransformation(ya, blind=TRUE)
+
+    colData(vsd)$targeting <- case_match(colData(vsd)$guide_group, 
+                                        c('sg100', 'sg1126') ~ 'non-targeting',
+                                        c('sg200', 'sg1152', 'sg1128') ~ 'targeting',
+                                        'WT' ~ 'WT',
+                                        )
+
+    #PCA without correction
+    pca_matrix<- as.data.frame(assay(vsd)) %>%
+        base::as.matrix() %>%
+        t()
+    sample_pca <- prcomp(pca_matrix)
+
+    first_PC <- paste0('PC', PC1)
+    second_PC <- paste0('PC', PC2)
+    # HAven't satandarzied yet
+    pc_scores <- sample_pca$x %>% as_tibble(rownames="sample")
+
+    color_var <- if(variable == 'group') 'group.1' else variable # group is similar to the internal var
+
+    pc_metadata <- inner_join(pc_scores, dt_colData_WT, join_by(sample == names))
+
+    mat <- DESeq2::plotPCA(vsd, c(variable), pcsToUse=PC1:PC2, returnData=TRUE)
+
+    pv <- attr(mat, 'percentVar')
+
+    p <- ggplot(data=mat,aes_string(x = first_PC, y = second_PC, color = color_var)) +
+        scale_shape_manual(values=c(4,16, 0)) +
+        geom_point(size=3) + xlab(paste0(first_PC,': ', round(pv[1]*100), '% variance')) +
+            ylab(paste0(second_PC,': ', round(pv[2]*100), '% variance')) + coord_fixed() +
+          ggtitle(paste0(first_PC, " and ", second_PC, ", ",contrast_name))
+
+    name <- paste0("Publication_PCA_Plots/",
+                        "figure_4_pca_", extra_info, "_",first_PC, "_", 
+                        second_PC, "_", contrast_name, ".pdf")
+    ggsave(name, plot=p)
+   
+   return(p)
+}
+
 #' Plot a MA plot labeled with selected genes
 #'
 #' @param res.list data.frame (or list) with log2FoldChange and padj columns (or elements).
