@@ -1,0 +1,6 @@
+#!/bin/bash
+
+Rscript -e "rmarkdown::render('transcript_spma_logfc_targeting_nontargeting_interaction.Rmd', param=list(contrast_name='TDP43_SN_sg200_vs_sg100_interaction', target='TDP43kd', targeting='sg200', nontargeting='sg100'))"
+Rscript -e "rmarkdown::render('transcript_spma_logfc_targeting_nontargeting_interaction.Rmd', param=list(contrast_name='FUSkd_SN_sg1152_vs_sg100_interaction', target='FUSkd', targeting='sg1152', nontargeting='sg100'))"
+Rscript -e "rmarkdown::render('transcript_spma_logfc_targeting_nontargeting_interaction.Rmd', param=list(contrast_name='HNRNPA1kd_SN_sg1128_vs_sg1126_interaction', target='HNRNPA1kd', targeting='sg1128', nontargeting='sg1126'))"
+

@@ -1,0 +1,26 @@
+name: /vf/users/CARD_ARDIS/2023_07_21_veronica_analysis/transite-env-4
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+  - r
+dependencies:
+  - bioconductor-transite
+  - r-heatmaply
+  - r-devtools
+  - r-tidyr
+  - bioconductor-degreport
+  - bioconductor-deseq2
+  - r-pheatmap
+  - r-ggrepel
+  - r-readr
+  - r-data.table
+  - bioconductor-fishpond
+  - bioconductor-tximeta
+  - r-tidyverse
+  - ca-certificates
+  - openssl
+  - bioconda::bioconductor-experimenthub
+  - bioconductor-macrophage
+  - bioconductor-pcaexplorer
+prefix: /vf/users/CARD_ARDIS/2023_07_21_veronica_analysis/transite-env-4

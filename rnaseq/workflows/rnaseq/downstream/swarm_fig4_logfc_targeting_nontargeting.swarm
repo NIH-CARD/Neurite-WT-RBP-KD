@@ -1,0 +1,7 @@
+Rscript -e "rmarkdown::render('final_4_logfc_targeting_nontargeting.Rmd', param=list(contrast_name='TDP43_N_targeting_over_nontargeting', targeting='sg200_N_TDP43kd', nontargeting='sg100_N_TDP43kd'))"
+Rscript -e "rmarkdown::render('final_4_logfc_targeting_nontargeting.Rmd', param=list(contrast_name='TDP43_S_targeting_over_nontargeting', targeting='sg200_S_TDP43kd', nontargeting='sg100_S_TDP43kd'))"
+Rscript -e "rmarkdown::render('final_4_logfc_targeting_nontargeting.Rmd', param=list(contrast_name='FUSkd_N_targeting_over_nontargeting', targeting='sg1152_N_FUSkd', nontargeting='sg100_N_FUSkd'))"
+Rscript -e "rmarkdown::render('final_4_logfc_targeting_nontargeting.Rmd', param=list(contrast_name='FUSkd_S_targeting_over_nontargeting', targeting='sg1152_S_FUSkd', nontargeting='sg100_S_FUSkd'))"
+Rscript -e "rmarkdown::render('final_4_logfc_targeting_nontargeting.Rmd', param=list(contrast_name='HNRNPA1kd_N_targeting_over_nontargeting', targeting='sg1128_N_HNRNPA1kd', nontargeting='sg1126_N_HNRNPA1kd'))"
+Rscript -e "rmarkdown::render('final_4_logfc_targeting_nontargeting.Rmd', param=list(contrast_name='HNRNPA1kd_S_targeting_over_nontargeting', targeting='sg1128_S_HNRNPA1kd', nontargeting='sg1126_S_HNRNPA1kd'))"
+

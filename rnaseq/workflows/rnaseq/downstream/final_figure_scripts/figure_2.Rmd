@@ -1,0 +1,267 @@
+---
+title: Differential expression analysis
+output:
+    html_document:
+        code_folding: hide
+        toc: true
+        toc_float: true
+        toc_depth: 3
+params:
+    contrast_name: ''
+    neurite_contrast: ''
+    soma_contrast: ''
+---
+
+```{r global_options, include=FALSE}
+# Sets up global options for rendering RMarkdown into HTML.
+system("export TMPDIR=/lscratch/$SLURM_JOB_ID")
+knitr::opts_chunk$set(
+    warning=FALSE,
+    message=FALSE,
+    cache.extra_file_dep_1 = file.info('../config/sampletable.tsv')$mtime,
+    cache.extra_file_dep_2 = file.info('../data/rnaseq_aggregation/featurecounts_features.txt')$mtime,
+    cache.extra_file_dep_3 = file.info('../data/rnaseq_samples/*/*.kallisto/abundance.h5')$mtime,
+    cache.extra_file_dep_4 = file.info('../data/rnaseq_samples/*/*.salmon/quant.sf')$mtime
+)
+```
+
+```{r lcdbwf, results='hide'}
+# Load the lcdbwf R package, which is stored locally.
+# This package has many custom functions used throughout this document.
+devtools::document('../../../lib/lcdbwf')
+devtools::load_all('../../../lib/lcdbwf')
+```
+
+
+```{r config}
+
+# HOW TO CONFIGURE ------------------------------------------------------
+# Any chunks below that depend on config options should be cached and use one
+# or more sections of the config object as arbitrary additional chunk options.
+# By convention, we use the argument name "config" although there is nothing
+# special about this name e.g.,
+#
+#      {r, cache=TRUE, config=config$annotation}
+#
+# Thereafter, any changes to config options under the "annotation" section will then
+# invalidate that chunk's cache -- along with any other chunks that also have
+# config$annotation included as a chunk option.
+#
+config <- lcdbwf:::load_config('config.yaml')
+
+# To keep this Rmd streamlined, much of the text is stored in a different file,
+# text.yaml, and accessed via the `text` list after it is loaded here.
+text <- yaml::yaml.load_file('text.yaml')
+
+# Initialixe ags 
+contrast_name <- 'WT_N_vs_WT_S'
+neurite_contrast <- 'WT_N'
+soma_contrast <- 'WT_S'
+```
+
+
+# Changelog
+
+**Initial results**
+
+Last run: `r date()`
+
+```{r coldata_setup}
+# Set up all of the metadata for the samples and experimental design. Use this
+# chunk to modify if needed.
+# https://bioconductor.org/packages/devel/bioc/vignettes/tximeta/inst/doc/tximeta.html
+# Normally don't recommend this but if we want everything to be consistent it is important to
+# use the same gtf files rather than having them downloaded automatically.
+colData <- read.table(config$main$sampletable, sep='\t', header=TRUE, stringsAsFactors=FALSE)
+
+# lcdb-wf requires that the first column of the sampletable contain sample
+# names. Use that to set the rownames.
+rownames(colData) <- colData[,1]
+```
+
+```{r dds_initial, cache=TRUE, config=c(config$main, config$toggle$salmon, config$toggle$kallisto)}
+# Convert featureCounts transcript-level counts into DESeq2 object, and run
+# variance-stabiliizing transform.
+# Will likely need to find a way to run salmon quant to combine the collapsable samples to 
+# do that like this:
+# salmon quant -i transcripts_index -l <LIBTYPE> \
+#  -1 reads01_1.fq  reads02_1.fq \
+#  -2 reads01_2.fq reads02_2.fq \
+#  -o sample
+# Will need to make a dataframe like this for the sampletable: https://support.bioconductor.org/p/9149213/
+# use fishpond 
+library(tximeta)
+library(data.table)
+
+dir <- '/data/CARD_ARDIS/2023_07_21_veronica_analysis/workflows/rnaseq/references_data/references_data/human/gencode-v28/'
+indexDir <- file.path(dir, "transcriptome/salmon/human_gencode-v28/")
+gtfPath <- file.path(dir, "annotation/human_gencode-v28.gtf")
+fastaPath <- file.path(dir, "genome/human_gencode-v28.fasta")
+
+salmon_dir <- '/data/CARD_ARDIS/2023_07_21_veronica_analysis/workflows/rnaseq/data/rnaseq_samples/'
+dt_colData <- setDT(colData)
+dt_colData[, names:=bio_group]
+
+
+# Remove lane two rows since we already collapsed by bio_group when making salmon files
+dt_colData <- dt_colData[!duplicated(dt_colData, by="bio_group")]
+# Add salmon file paths
+dt_colData[, files:= paste0(salmon_dir, bio_group, '.salmon/quant.sf')]
+
+dt_colData_WT <- dt_colData[full_guide_grp %in% c(neurite_contrast, soma_contrast),]
+
+# Set conditions for this round
+dt_colData_WT$cellular_zone <- factor(dt_colData_WT$full_guide_grp ,levels=c(soma_contrast, neurite_contrast))
+```
+
+```{r tximeta_setup, cache=TRUE, depends='dds_initial', config=c(config$main, config$toggle$salmon, config$toggle$kallisto)}
+
+# Just like lcdb_wf ignore the version number
+# Use the full version for calculations outside of just one group
+se <- tximeta(dt_colData_WT, ignoreTxVersion=TRUE, txOut=TRUE)
+gse <- summarizeToGene(se)
+
+# Rename for the statistical portion
+y <- se
+yg <- gse
+
+library(DESeq2)
+library(ggplot2)
+library(dplyr)
+
+ya <- DESeqDataSet(y, design = ~1)
+vsd <- varianceStabilizingTransformation(ya, blind=TRUE)
+```
+
+```{r PCA,config=c(config$main, config$toggle$salmon, config$toggle$kallisto)}
+
+#PCA without correction
+pca_matrix<- as.data.frame(assay(vsd)) %>%
+    base::as.matrix() %>%
+    t()
+sample_pca <- prcomp(pca_matrix)
+
+# HAven't satandarzied yet
+pc_scores <- sample_pca$x %>% as_tibble(rownames="sample")
+
+# Change variables in order to generate PCA plots
+variable <- c('zone')
+PC1 <- 1
+PC2 <- 2
+first_PC <- paste0('PC', PC1)
+second_PC <- paste0('PC', PC2)
+color_var <- if(variable == 'group') 'group.1' else variable # group is similar to the internal var
+
+pc_metadata <- inner_join(pc_scores, dt_colData_WT, join_by(sample == names))
+
+mat <- DESeq2::plotPCA(vsd, c(variable, 'targeting'), pcsToUse=PC1:PC2, returnData=TRUE)
+
+pv <- attr(mat, 'percentVar')
+
+p <- ggplot(data=mat,aes_string(x = first_PC, y = second_PC, color = color_var)) +
+    scale_shape_manual(values=c(4,16, 0)) +
+geom_point(size=3) + xlab(paste0(first_PC,': ', round(pv[1]*100), '% variance')) +
+          ylab(paste0(second_PC,': ', round(pv[2]*100), '% variance')) + coord_fixed() +
+          ggtitle(paste0(first_PC, " and ", second_PC, " WT samples by cellular zone"))
+ggsave(paste0("Publication_PCA_plots/", variable, "figure_2_pca_",first_PC, "_", second_PC, "_only_WT.pdf"), plot=p)
+
+
+```
+
+```{r swish, cache=TRUE, config=c(config$main, config$toggle$salmon, config$toggle$kallisto), dependson=c('PCA', 'tximeta_setup', 'dds_initial')}
+
+library(fishpond)
+library(tibble)
+y <- scaleInfReps(y)
+y <- labelKeep(y)
+y <- y[mcols(y)$keep,]
+set.seed(1)
+
+swee <- swish(y, x="cellular_zone", pair="pair")
+
+# Get the rows with an FDR in the 5% level
+df <- mcols(swee)
+df$tx_name <- rownames(df)
+sign_tran <- as.tibble(df)
+# Must arrange by something for transite. Must specify what that is. They suggest log2FC
+sign_tran <- dplyr::arrange(sign_tran, log2FC, locfdr)
+sign_out <- apply(sign_tran, 2, as.character)
+write.csv(sign_out, paste0("diff_tran", contrast_name, ".csv"), quote=FALSE, row.names=FALSE)
+```
+
+```{r volcano_plot,config=c(config$main, config$toggle$salmon, config$toggle$kallisto) }
+# Define significance threshold
+alpha <- 0.05
+
+# Create volcano plot
+# Because of the way swish does statistics a weird volcano plot is expected
+# Use an MA plot instead, it has more information anyway
+volcano <- ggplot(sign_tran, aes(x = log2FC, y = -log10(qvalue))) +
+  geom_point(color = ifelse(sign_tran$qvalue < alpha, "red", "black"), size = 2) +
+  geom_hline(yintercept = -log10(alpha), linetype = "dashed", color = "blue") +
+  labs(x = "Log Fold Change", y = "-log10(q-value)", title = "Volcano Plot") +
+  theme_minimal()
+# Session info
+For reproducibility purposes, here is the output of `sessionInfo()` showing the
+versions of all packages used here.
+
+genedb <- fread('gene_table_GRCh38-2020-A.tsv')
+library(purrr)
+library(stringr)
+gene_ids_swee <- mcols(swee)$gene_id
+mcols(swee)$gene_id_trimmed <- sub("\\..*$", "", as.character(mcols(swee)$gene_id))
+gene_id_lookup <- merge(genedb, mcols(swee), by.x='ENSEMBL', by.y='gene_id_trimmed', all=FALSE)
+
+plotMASwish(swee, alpha=.05, xlim=c(.5,5.5))
+with(
+  subset(gene_id_lookup, qvalue < .05 & abs(log2FC) > 4),
+     text(log10mean, log2FC, SYMBOL,
+          col="blue", pos=4, cex=.7)
+)
+
+```{r maplot,cache=TRUE,config=c(config$main, config$toggle$salmon, config$toggle$kallisto), dependson=c('swish', 'tximeta_setup','dds_initial')}
+library(ggpubr)
+library(tidyverse)
+
+# Rename columns for this
+ma_plot_data <- gene_id_lookup
+names(ma_plot_data)[names(ma_plot_data) == "log10mean"] <- "baseMean"             
+names(ma_plot_data)[names(ma_plot_data) == "log2FC"] <- "log2FoldChange"             
+# q value are essentially adjusted p values
+# https://www.nonlinear.com/progenesis/qi-for-proteomics/v4.2/faq/pq-values.aspx
+names(ma_plot_data)[names(ma_plot_data) == "qvalue"] <- "padj"             
+
+# Convert from log10 to normalized 
+ma_plot_data['baseMean'] = lapply(ma_plot_data['baseMean'], function(x) {
+   x <- 10 ** x
+   return(x)
+})
+
+# Replace any empty SYMBOLS
+ma_plot_data$SYMBOL[ma_plot_data$SYMBOL == ""] <- ma_plot_data$ENSEMBL[ma_plot_data$SYMBOL == ""]
+
+ggmaplot(ma_plot_data,  main = expression("S3 Neurite / S3 Soma"), 
+    fc=1.5, 
+    fdr=0.05, 
+    genenames=as.vector(ma_plot_data$SYMBOL),
+   palette = c("#B31B21", "#1465AC", "darkgray"),
+   top = 20,
+   font.label = c("bold", 12), label.rectangle=TRUE,
+   font.legend = c(size=14, "bold"),
+   font.x = c(size=14, "bold"),
+   font.y = c(size=14, "bold"),
+   font.main = c(size = 20, "bold"),
+   font.tickslab = c(size=14),
+   ggtheme = ggplot2::theme_minimal(),
+   size=0.5
+)
+
+relevant_data <- ma_plot_data[ma_plot_data$padj < 0.05,]
+relevant_data <- ma_plot_data[ma_plot_data$log2FoldChange < 1,]
+relevant_data <- relevant_data['ENSEMBL']
+write.csv(relevant_data, paste0("diff_f0r_GI", contrast_name, ".csv"), quote=FALSE, row.names=FALSE)
+```
+
+```{r sessioninfo}
+sessionInfo()
+```

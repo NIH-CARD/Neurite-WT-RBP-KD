@@ -1,0 +1,1052 @@
+--
+title: Differential expression analysis
+output:
+    html_document:
+        code_folding: hide
+        toc: true
+        toc_float: true
+        toc_depth: 3
+---
+
+```{r global_options, include=FALSE}
+# Sets up global options for rendering RMarkdown into HTML.
+knitr::opts_chunk$set(
+    warning=FALSE,
+    message=FALSE,
+    cache.extra_file_dep_1 = file.info('../config/sampletable.tsv')$mtime,
+    cache.extra_file_dep_2 = file.info('../data/rnaseq_aggregation/featurecounts.txt')$mtime,
+    cache.extra_file_dep_3 = file.info('../data/rnaseq_samples/*/*.kallisto/abundance.h5')$mtime,
+    cache.extra_file_dep_4 = file.info('../data/rnaseq_samples/*/*.salmon/quant.sf')$mtime
+)
+```
+
+```{r lcdbwf, results='hide'}
+# Load the lcdbwf R package, which is stored locally.
+# This package has many custom functions used throughout this document.
+devtools::document('../../../lib/lcdbwf')
+devtools::load_all('../../../lib/lcdbwf')
+```
+
+```{r libraries}
+library(AnnotationHub)
+library(BiocParallel)
+library(clusterProfiler)
+library(cowplot)
+library(DESeq2)
+library(dplyr)
+library(DT)
+library(genefilter)
+library(ggplot2)
+library(gridExtra)
+library(plotly)
+library(purrr)
+library(readr)
+library(reshape)
+library(tibble)
+library(tximport)
+library(UpSetR)
+library(biomaRt)
+library(tidyr)
+library(ggpubr)
+```
+
+```{r config}
+
+# HOW TO CONFIGURE ------------------------------------------------------
+# Any chunks below that depend on config options should be cached and use one
+# or more sections of the config object as arbitrary additional chunk options.
+# By convention, we use the argument name "config" although there is nothing
+# special about this name e.g.,
+#
+#      {r, cache=TRUE, config=config$annotation}
+#
+# Thereafter, any changes to config options under the "annotation" section will then
+# invalidate that chunk's cache -- along with any other chunks that also have
+# config$annotation included as a chunk option.
+#
+config <- lcdbwf:::load_config('config.yaml')
+
+# To keep this Rmd streamlined, much of the text is stored in a different file,
+# text.yaml, and accessed via the `text` list after it is loaded here.
+text <- yaml::yaml.load_file('text.yaml')
+
+parallel <- config$parallel$parallel
+if (config$parallel$parallel){
+    register(MulticoreParam(config$parallel$cores))
+}
+```
+
+
+# Changelog
+
+**Initial results**
+
+Last run: `r date()`
+
+```{r coldata_setup}
+# Set up all of the metadata for the samples and experimental design. Use this
+# chunk to modify if needed.
+colData <- read.table(config$main$sampletable, sep='\t', header=TRUE, stringsAsFactors=FALSE)
+
+# lcdb-wf requires that the first column of the sampletable contains sample
+# names. Use that to set the rownames.
+rownames(colData) <- colData[,1]
+
+colData$targeting <- case_match(colData$guide_group, 
+                                     c('sg100', 'sg1126') ~ 'nontargeting',
+                                     c('sg200', 'sg1152', 'sg1128') ~ 'targeting',
+                                     c('WT') ~ 'WT',
+                                     )
+colData$targeting <- factor(colData$targeting, levels=c('nontargeting', 'targeting', 'WT'))
+colData$pair <- factor(colData$pair)
+# The soma is the reference lvl since it includes everything
+colData$zone <- factor(colData$zone, levels=c('S', 'N'))
+colData <- colData %>% mutate(batch = factor(case_when(group == 'TDP43kd' ~ 'batch1',
+                                                             group == 'FUSkd' ~ 'batch2',
+                                                             group == 'HNRNPA1kd' ~ 'batch3',
+                                                             group == 'WT' ~ 'WT')))
+```
+
+```{r dds_initial, cache=TRUE, config=c(config$main, config$toggle$salmon, config$toggle$kallisto)}
+# Convert featureCounts gene-level counts into DESeq2 object, and run
+# variance-stabiliizing transform.
+dds_initial <- lcdbwf:::make_dds(
+  list(sampletable=colData, design=~1),
+  config=config,
+  parallel=config$parallel$parallel
+)
+vsd <- varianceStabilizingTransformation(dds_initial, blind=TRUE)
+
+```
+
+# Experiment overview
+
+Here is the sample table with metadata used for this analysis:
+
+```{r print_coldata}
+exclude.for.printing <- c('featurecounts.path', 'salmon.path', 'kallisto.path',
+                          'orig_filename', 'orig_filename_R2', 'layout',
+                          'sizeFactor')
+colData(dds_initial) %>%
+    as.data.frame() %>%
+    dplyr::select(-contains(exclude.for.printing)) %>%
+    datatable()
+```
+
+
+# Sample similarity and QC
+
+## Clustered heatmap
+
+```{r sample_heatmap, results='asis', cache=TRUE, config=c(text$qc$clustered_heatmap, config$plotting$covariates_for_plots), dependson='dds_initial'}
+# Plot a clustered heatmap of sample distances, for QC.
+lcdbwf:::mdcat(text$qc$clustered_heatmap)
+lcdbwf:::plot_heatmap(vsd, colData, cols_for_grouping=config$plotting$covariates_for_plots)
+```
+
+## PCA {.tabset}
+
+### WT {.tabset}
+
+```{r pca_2, results='asis', cache=TRUE, config=c(text$qc$pca, config$plotting$covariates_for_plots), dependson='dds_initial'}
+# Plot PCA plots, optionally tabbed with different factors colored, for QC.
+lcdbwf:::mdcat(text$qc$pca)
+
+for(group in config$plotting$covariates_for_plots){
+    lcdbwf:::mdcat('#### ', paste(group, sep=", "))
+    p <- lcdbwf:::plotPCA.ly(vsd, intgroup=group)
+    print(htmltools::tagList(ggplotly(p)))
+}
+
+```
+
+### NO WT {.tabset}
+
+```{r pca, results='asis', cache=TRUE, config=c(text$qc$pca, config$plotting$covariates_for_plots), dependson='dds_initial'}
+# Plot PCA plots, optionally tabbed with different factors colored, for QC.
+vsd_no_wt <- vsd[,vsd$group != 'WT']
+library(data.table)
+library(ggplot2)
+library(ggthemes)
+library(viridis)
+library(pheatmap)
+library(foreach)
+#lcdbwf:::mdcat('#### NO WT')
+for(group in config$plotting$covariates_for_plots){
+    lcdbwf:::mdcat('#### ', paste(group, sep=", "))
+    p <- lcdbwf:::plotPCA.ly(vsd_no_wt, intgroup=group)
+    print(htmltools::tagList(ggplotly(p)))
+}
+
+```
+
+```{r snoheatmap]
+vsd_wt_only <- vsd[,vsd$group == 'WT']
+counts <- assay(vsd_wt_only)
+counts_dt = as.data.table(counts, keep.rownames=TRUE)
+
+# bring in sno for each 
+o <- foreach(filename=list.files(pattern='*.csv', path='snoRNAs', full.names=TRUE),  combine='rbind') %do% {
+    dat <- fread(filename)
+    filename.split <- unlist(strsplit(filename, split='_|\\.'))
+    grp <- filename.split[2]
+    treatment <- filename.split[3]
+    dat <- melt(dat, measure.vars=colnames(dat)[-c(1)], variable.name='sample')
+    dat[, 'grp' := grp]
+    dat[, 'treatment' := treatment]
+    setnames(dat, 'V1', 'gene')
+    return(dat[])
+}
+
+setnames(counts_dt, 'rn', 'ENSEMBL')
+dat_2 <- melt(counts_dt, measure.vars=colnames(counts_dt)[-c(1)], variable.name='sample')
+
+
+# Prepare for name conversion
+ensembl <- useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+
+# Query to get gene symbols
+genes <- getBM(attributes = c('ensembl_gene_id', 'hgnc_symbol'),
+               filters = 'ensembl_gene_id',
+               values = counts_dt$ENSEMBL,
+               mart = ensembl)
+
+dat_2 <- merge(dat_2, genes, by.x='ENSEMBL', by.y='ensembl_gene_id', all.x=FALSE, all.y=FALSE)
+
+dat_2[sample %like% 'N', zone := 'Neurite']
+dat_2[sample %like% 'S', zone := 'Soma']
+dat_2[, sample := tstrsplit(sample, split='_')[3]]
+dat_2[, sample := as.numeric(sample)]
+dat_2[, sample := factor(sample)]
+
+# Ensure all rows have Neurite or Soma labeled zone
+stopifnot(nrow(dat_2[is.na(zone)]) == 0)
+
+dat_2[, 'log10Value' := log10(value+1)]
+# Merge to get the snoRNAs. 
+unique_genes_to_grab <- unique(o[[1]]$gene)
+#pare down to relevant columns
+symbol_dt <- symbol_dt[c('gene', 'ensembl_gene_id')]
+final_dat <- merge(dat_2, symbol_dt, by.x="ENSEMBL", by.y="ensembl_gene_id", all.x=FALSE, all.y=TRUE)
+
+gene_superset <- rev(sort(unique(final_dat$gene)))
+final_dat[, gene := factor(gene, levels=gene_superset)]
+
+fwrite(dat_2, "WT_data.csv")
+```
+
+```{r sizefactors, results='asis', eval=!(config$toggle$salmon | config$toggle$kallisto)}
+# Note that when loading Salmon or Kallisto, DESeq2 does not calculate size
+# factors.
+
+lcdbwf:::mdcat(text$sizefactors)
+lcdbwf:::mdcat("### Size factors")
+p <- lcdbwf:::sizefactors_barplot(dds_initial)
+ggplotly(p)
+
+lcdbwf:::mdcat("### Size factors vs total read count")
+p <- lcdbwf:::sizefactors_vs_total(dds_initial)
+ggplotly(p)
+```
+
+```{r dds_list_initial, cache=TRUE, config=config$main}
+# Create a list of dds objects used as the basis for differential expression.
+#
+# May need substantial editing.
+
+
+lst <- list(
+            targeting_nontargeting_N_HNRNPA1kd=list(
+                sampletable=colData %>% filter(group == 'HNRNPA1kd' & zone == 'N'),
+                design=~targeting,
+                subset_counts=TRUE),
+            
+            targeting_nontargeting_S_HNRNPA1kd=list(
+                sampletable=colData %>% filter(group == 'HNRNPA1kd' & zone == 'S'),
+                design=~targeting,
+                subset_counts=TRUE),
+            
+            targeting_nontargeting_N_TDP43kd=list(
+                sampletable=colData %>% filter(group == 'TDP43kd' & zone == 'N'),
+                design=~targeting,
+                subset_counts=TRUE),
+
+            targeting_nontargeting_S_TDP43kd=list(
+                sampletable=colData %>% filter(group == 'TDP43kd' & zone == 'S'),
+                design=~targeting,
+                subset_counts=TRUE),
+
+            targeting_nontargeting_N_FUSkd=list(
+                sampletable=colData %>% filter(group == 'FUSkd' & zone == 'N'),
+                design=~targeting,
+                subset_counts=TRUE),
+
+            targeting_nontargeting_S_FUSkd=list(
+                sampletable=colData %>% filter(group == 'FUSkd' & zone == 'S'),
+                design=~targeting,
+                subset_counts=TRUE),
+
+            zone_sg1152_FUSkd=list(
+                sampletable=colData %>% filter(group == 'FUSkd' & guide_group=='sg1152'),
+                design=~pair + zone,
+                subset_counts=TRUE),
+
+            zone_sg100_FUSkd=list(
+                sampletable=colData %>% filter(group == 'FUSkd' & guide_group=='sg100'),
+                design=~pair + zone,
+                subset_counts=TRUE),
+
+            zone_sg100_TDP43kd=list(
+                sampletable=colData %>% filter(group == 'TDP43kd' & guide_group=='sg100'),
+                design=~pair + zone,
+                subset_counts=TRUE),
+
+            zone_sg200_TDP43kd=list(
+                sampletable=colData %>% filter(group == 'TDP43kd' & guide_group=='sg200'),
+                design=~pair + zone,
+                subset_counts=TRUE),
+
+            zone_sg1126_HNRNPA1kd=list(
+                sampletable=colData %>% filter(group == 'HNRNPA1kd' & guide_group=='sg1126'),
+                design=~pair + zone,
+                subset_counts=TRUE),
+
+            zone_sg1128_HNRNPA1kd=list(
+                sampletable=colData %>% filter(group == 'HNRNPA1kd' & guide_group=='sg1128'),
+                design=~pair + zone,
+                subset_counts=TRUE),
+
+            zone_trgt_HNRN_FUS=list(
+                sampletable=colData %>% filter(group %in% c('HNRNPA1kd', 'FUSkd') &
+                                              targeting == 'targeting'),
+                design=~pair + zone,
+                subset_counts=TRUE),
+
+            zone_nontrgt_HNRN_FUS=list(
+                sampletable=colData %>% filter(group %in% c('HNRNPA1kd', 'FUSkd') &
+                                               targeting == 'nontargeting'),
+                design=~pair + zone,
+                subset_counts=TRUE),
+
+            zone_trgt_three=list(
+                sampletable=colData %>% filter(group %in% c('HNRNPA1kd', 'FUSkd', 'TDP43kd') &
+                                               targeting == 'targeting'),
+                design=~pair + zone,
+                subset_counts=TRUE),
+
+            zone_ntrgt_three=list(
+                sampletable=colData %>% filter(group %in% c('HNRNPA1kd', 'FUSkd', 'TDP43kd') &
+                                               targeting == 'nontargeting'),
+                design=~pair + zone,
+                subset_counts=TRUE),
+
+            targeting_nontargeting_HNRN_FUS_N=list(
+                sampletable=colData %>% filter(group %in% c('HNRNPA1kd', 'FUSkd') 
+                                               & zone == 'N'),
+                design=~targeting,
+                subset_counts=TRUE),
+
+            targeting_nontargeting_HNRN_FUS_S=list(
+                sampletable=colData %>% filter(group %in% c('HNRNPA1kd', 'FUSkd') 
+                                               & zone == 'S'),
+                design=~targeting,
+                subset_counts=TRUE),
+
+            targeting_nontargeting_three_N=list(
+                sampletable=colData %>% filter(group %in% c('HNRNPA1kd', 'FUSkd', 'TDP43kd') &
+                                               zone == 'N'),
+                design=~targeting,
+                subset_counts=TRUE),
+
+            targeting_nontargeting_three_S=list(
+                sampletable=colData %>% filter(group %in% c('HNRNPA1kd', 'FUSkd', 'TDP43kd') &
+                                               zone == 'S'),
+                design=~targeting,
+                subset_counts=TRUE),
+
+            WT_N_vs_S=list(
+                sampletable=colData %>% filter(group == 'WT'),
+                design=~pair + zone,
+                subset_counts=TRUE),
+
+            batch_control=list(
+                sampletable=colData %>% filter(group != 'WT'),
+                design=~targeting + batch + zone,
+                subset_counts=TRUE)
+
+
+            # Example 3: use salmon
+            #salmon=list(
+            #    sampletable=colData,
+            #    design=~full_guide_grp,
+            #    salmon=TRUE),
+
+           # # Example 4: use kallisto
+            #kallisto=list(
+            #    sampletable=colData,
+            #    design=~full_guide_grp,
+             #   kallisto=TRUE)
+            # ------------------------------------------------------------------
+          )
+
+
+# preallocate to make more efficient
+dds_list <- vector("list", 22)
+dds_list <- map(lst, lcdbwf:::make_dds, config=config, parallel=config$parallel$parallel)
+            
+```
+
+```{r dds_list, cache=TRUE, dependson='dds_list_initial', config=config$main, cache.lazy=FALSE}
+### New chunk for easier additions later. This chunk depends on the previous
+lst2 <- list(
+            #zone_trgt_three_batch=list(
+            #    sampletable=colData %>% filter(group %in% c('HNRNPA1kd', 'FUSkd', 'TDP43kd') &
+             #                                  targeting == 'targeting'),
+            #    design=~pair + batch + zone,
+              #  subset_counts=TRUE),
+
+            #zone_ntrgt_three_batch=list(
+            #    sampletable=colData %>% filter(group %in% c('HNRNPA1kd', 'FUSkd', 'TDP43kd') &
+            #                                   targeting == 'nontargeting'),
+            #    design=~pair + batch+ zone,
+            #    subset_counts=TRUE),
+
+            targeting_nontargeting_three_N_batch=list(
+                sampletable=colData %>% filter(group %in% c('HNRNPA1kd', 'FUSkd', 'TDP43kd') &
+                                               zone == 'N'),
+                design=~batch+targeting,
+                subset_counts=TRUE),
+
+            targeting_nontargeting_three_S_batch=list(
+                sampletable=colData %>% filter(group %in% c('HNRNPA1kd', 'FUSkd', 'TDP43kd') &
+                                               zone == 'S'),
+                design=~batch+targeting,
+                subset_counts=TRUE)
+        )
+
+dds_list_2 <- map(lst2, lcdbwf:::make_dds, config=config, parallel=config$parallel$parallel)
+dds_list <- c(dds_list, dds_list_2)
+```
+
+```{r dds_interactions, results='asis', cache=TRUE, dependson='dds_list', eval=TRUE, cache.lazy=FALSE}
+`%notin%` <- Negate(`%in%`)
+
+# We must do this to get the interaction terms to work
+# See documentation at https://www.bioconductor.org/packages/release/bioc/vignettes/DESeq2/inst/doc/DESeq2.html
+# under Group-specific condition effects, individuals nested within groups
+# In out case, the pair is like the ind factor, the zone is like the cnd factor,
+# and targeting is like the group factor
+## groups_vector == c("group1", "group2")
+prepare_pair_var <- function(groups_vector){
+    dds1 <- DESeqDataSetFromCombinedFeatureCounts(
+      '../data/rnaseq_aggregation/featurecounts.txt',
+        sampletable=colData %>% filter(group %in% c(groups_vector)),
+        design=~pair + zone,  # set design simple for now, reformulate later
+        subset_counts=TRUE
+        )
+    if (config$main$strip_dotted_version){
+        dds1 <- lcdbwf:::strip_dotted_version_from_dds(dds1)
+    }
+    dds1 <- lcdbwf:::collapseReplicates2(dds1, dds1[['bio_group']])
+    # now generate a new factor to nest guide_group and pairing variables 
+    # while leaving the zone alone
+    colData(dds1)$pair.n <- separate(data=as.data.frame(colData(dds1)), col='pair', sep=c('_'), into=c("guidepair", "guidegene", "pair.n"))$pair.n
+    # Reassign †he design via a model matrix
+    colData(dds1)$pair.n <- factor(colData(dds1)$pair.n)
+    colData(dds1)$guide_group <- factor(colData(dds1)$guide_group)
+    return(dds1)
+}
+
+## group_name == name you want to give the groups involved
+# separate name function to be more efficient with the way R does pass-on-modify
+create_name <- function(dds, group_name){
+    guide2 <- toString(unique(colData(dds)$guide_group)[2])
+    guide1 <- toString(unique(colData(dds)$guide_group)[1])
+    list_name <- paste0(group_name,"_SN_",guide2,"_",guide1,"_interaction")
+}
+
+for (group_param in unique(colData$group)){
+    if ('WT' %notin% group_param){
+        new_dds <- prepare_pair_var(group_param)
+        design(new_dds) <- ~ targeting + targeting:pair.n + targeting:zone
+        new_dds <- DESeq(new_dds, parallel=config$parallel$parallel)
+        new_name <- create_name(new_dds, group_param)
+        dds_list[[new_name]] <- new_dds
+    }else{next}
+}
+
+# HNRNPA1kd and FUS
+new_dds <- prepare_pair_var(c("HNRNPA1kd", "FUSkd"))
+design(new_dds) <- ~ targeting + targeting:pair.n + targeting:zone
+new_dds <- DESeq(new_dds, parallel=config$parallel$parallel)
+new_name <- create_name(new_dds, "HNRN_FUS")
+dds_list[[new_name]] <- new_dds
+
+# All three interaction
+new_dds <- prepare_pair_var(c("HNRNPA1kd", "FUSkd", "TDP43kd"))
+design(new_dds) <- ~ targeting + targeting:pair.n + targeting:zone
+new_dds <- DESeq(new_dds, parallel=config$parallel$parallel)
+new_name <- create_name(new_dds, "all_three_targets")
+dds_list[[new_name]] <- new_dds
+
+# All three interaction plus batch!
+# # IF DELETED, IN THE FUTURE CONSIDER FINDING A WAY TO PUT THIS IN!
+new_dds <- prepare_pair_var(c("HNRNPA1kd", "FUSkd", "TDP43kd"))
+design(new_dds) <- ~ targeting + batch + targeting:pair.n + targeting:zone
+new_dds <- DESeq(new_dds, parallel=config$parallel$parallel)
+new_name <- create_name(new_dds, "all_three_targets_batch")
+dds_list[[new_name]] <- new_dds
+
+# LEt's make one just for using all three variables without an interaction design
+new_dds <- prepare_pair_var(c("HNRNPA1kd", "FUSkd", "TDP43kd"))
+design(new_dds) <- ~ targeting + pair.n + zone
+new_dds <- DESeq(new_dds, parallel=config$parallel$parallel)
+new_name <-  "three_targets_nested_non_interaction"
+dds_list[[new_name]] <- new_dds
+
+# LEt's make one just for using all three variables without an interaction design plus batch!
+new_dds <- dds_list[['batch_control']]
+colData(new_dds)$pair.n <- separate(data=as.data.frame(colData(new_dds)), col='pair', sep=c('_'), into=c("guidepair", "guidegene", "pair.n"))$pair.n
+# Reassign †he design via a model matrix
+colData(new_dds)$pair.n <- factor(colData(new_dds)$pair.n)
+design(new_dds) <- ~ targeting + pair.n + batch + zone
+new_dds <- DESeq(new_dds, parallel=config$parallel$parallel)
+new_name <- "three_targets_nested_non_interaction_batch"
+dds_list[[new_name]] <- new_dds
+```
+
+```{r dds_diagnostics, results='asis', cache=TRUE, dependson=c('dds_list','dds_interactions'), config=config$toggle$dds_diagnostics}
+if (config$toggle$dds_diagnostics){ lcdbwf:::dds_diagnostics(dds_list, text) }
+```
+
+```{r testing, eval=FALSE}
+test_interaction <- results(dds_list$guide_group_SN_sg1128_sg1126_interaction, name="targetingnontargeting.zoneN")
+test_interaction <- as.data.table(as.data.frame(test_interaction), keep.rownames=TRUE)
+
+test <- results(dds_list$zone_sg1126_HNRNPA1kd, contrast=c("zone", "N", "S"))
+
+```
+
+# Differential expression {.tabset}
+
+Now we perform differential expression analysis for the contrasts listed in the
+table below.
+
+Under the table are tabs, one for each contrast. Under each contrast's tab,
+there are more tabs for the various output.
+
+```{r results_00, dependson='dds_list', cache=TRUE, eval=FALSE}
+# Perform differential expression testing.
+#
+# ------------------------------------------------------------------------------
+# To take advantage of caching:
+#   - create each list in a different chunk
+#   - ensure chunk name starts with "results_"
+#   - ensure list name starts with "contr_[index]_". The rest of the name will be used
+#     as a readable label for each constrast. [index] is an alphanumeric string 
+#     (ex: contr_01_* or contr_2b_*) that will be used to sort contrasts for output files.
+#     The index string must contain at least 1 character and cannot contain "_"
+#
+# This will need substantial editing.
+#
+# See ?make_results for details.
+# ------------------------------------------------------------------------------
+
+# Delete these for real data!
+#
+# Example 1:
+#  - demonstrates creating and manipulating coefficients
+#control <- lcdbwf:::dds_coefs('main', group=='control')
+#treatment <- lcdbwf:::dds_coefs('main', group=='treatment')
+#contr_01_main <- lcdbwf:::make_results(
+#  dds_name='main',
+ # label='LFC>0',
+ # contrast=treatment - control,
+ # type='ashr'
+#)
+```
+
+```{r results_011, dependson='dds_list', cache=TRUE}
+##HNRP N contrasts
+contr_01aa_lfc05_trgt_ntrgt_N_HNRNPA1kd <- lcdbwf:::make_results(
+  dds_name="targeting_nontargeting_N_HNRNPA1kd",
+  contrast=c("targeting", "targeting", "nontargeting"),
+  lfcThreshold=0.5,
+  type="ashr",
+  label="targeting ctrst in Neurites for HNRNPA1 lfc >0.5"
+)
+```
+
+```{r results_012, dependson='dds_list', cache=TRUE}
+contr_01ab_lfc1_trgt_ntrgt_N_HNRNPA1kd <- lcdbwf:::make_results(
+  dds_name="targeting_nontargeting_N_HNRNPA1kd",
+  lfcThreshold=1,
+  contrast=c("targeting", "targeting", "nontargeting"),
+  type="ashr",
+  label="targeting ctrst in Neurites for HNRNPA1 lfc >1"
+)
+```
+
+```{r results_013, dependson='dds_list', cache=TRUE}
+contr_01ba_lfc05_trgt_ntrgt_S_HNRNPA1kd <- lcdbwf:::make_results(
+  dds_name="targeting_nontargeting_S_HNRNPA1kd",
+  lfcThreshold=0.5,
+  contrast=c("targeting", "targeting", "nontargeting"),
+  type="ashr",
+  label="targeting ctrst in Soma for HNRNPA1 lfc >0.5"
+)
+```
+
+```{r results_014, dependson='dds_list', cache=TRUE}
+contr_01bb_lfc1_trgt_ntrgt_S_HNRNPA1kd <- lcdbwf:::make_results(
+  dds_name="targeting_nontargeting_S_HNRNPA1kd",
+  lfcThreshold=1,
+  contrast=c("targeting", "targeting", "nontargeting"),
+  type="ashr",
+  label="targeting ctrst in Soma for HNRNPA1 lfc >1"
+)
+```
+
+```{r results_021, dependson='dds_list', cache=TRUE}
+contr_02aa_lfc05_trgt_ntrgt_N_FUSkd <- lcdbwf:::make_results(
+  # FUS contrasts
+  dds_name="targeting_nontargeting_N_FUSkd",
+  contrast=c("targeting", "targeting", "nontargeting"),
+  lfcThreshold=0.5,
+  type="ashr",
+  label="targeting ctrst in Neurites for FUS lfc >0.5"
+)
+```
+
+```{r results_022, dependson='dds_list', cache=TRUE}
+contr_02ab_lfc1_trgt_ntrgt_N_FUSkd <- lcdbwf:::make_results(
+  dds_name="targeting_nontargeting_N_FUSkd",
+  lfcThreshold=1,
+  contrast=c("targeting", "targeting", "nontargeting"),
+  type="ashr",
+  label="targeting ctrst in Neurites for FUS lfc >1"
+)
+```
+
+```{r results_023, dependson='dds_list', cache=TRUE}
+contr_02ba_lfc05_trgt_ntrgt_S_FUSkd <- lcdbwf:::make_results(
+  dds_name="targeting_nontargeting_S_FUSkd",
+  lfcThreshold=0.5,
+  contrast=c("targeting", "targeting", "nontargeting"),
+  type="ashr",
+  label="targeting ctrst in Soma for FUS lfc >0.5"
+)
+```
+
+```{r results_024, dependson='dds_list', cache=TRUE}
+contr_02bb_lfc1_trgt_ntrgt_S_FUSkd <- lcdbwf:::make_results(
+  dds_name="targeting_nontargeting_S_FUSkd",
+  lfcThreshold=1,
+  contrast=c("targeting", "targeting", "nontargeting"),
+  type="ashr",
+  label="targeting ctrst in Soma for FUS lfc >1"
+)
+```
+
+```{r results_031, dependson='dds_list', cache=TRUE}
+contr_03aa_lfc05_trgt_ntrgt_N_TDP43kd <- lcdbwf:::make_results(
+  # TDP43 contrasts
+  dds_name="targeting_nontargeting_N_TDP43kd",
+  contrast=c("targeting", "targeting", "nontargeting"),
+  lfcThreshold=0.5,
+  type="ashr",
+  label="targeting ctrst in Neurites for TDP4 lfc >0.5"
+)
+```
+
+```{r results_032, dependson='dds_list', cache=TRUE}
+contr_03ab_lfc1_trgt_ntrgt_N_TDP43kd <- lcdbwf:::make_results(
+  dds_name="targeting_nontargeting_N_TDP43kd",
+  lfcThreshold=1,
+  contrast=c("targeting", "targeting", "nontargeting"),
+  type="ashr",
+  label="targeting ctrst in Neurites for TDP4 lfc >1"
+)
+```
+
+```{r results_033, dependson='dds_list', cache=TRUE}
+contr_03ba_lfc05_trgt_ntrgt_S_TDP43kd <- lcdbwf:::make_results(
+  dds_name="targeting_nontargeting_S_TDP43kd",
+  lfcThreshold=0.5,
+  contrast=c("targeting", "targeting", "nontargeting"),
+  type="ashr",
+  label="targeting ctrst in Soma for TDP4 lfc >0.5"
+)
+```
+
+```{r results_034, dependson='dds_list', cache=TRUE}
+contr_03bb_lfc1_trgt_ntrgt_S_TDP43kd <- lcdbwf:::make_results(
+  dds_name="targeting_nontargeting_S_TDP43kd",
+  lfcThreshold=1,
+  contrast=c("targeting", "targeting", "nontargeting"),
+  type="ashr",
+  label="targeting ctrst in Soma for TDP4 lfc >1"
+)
+```
+
+```{r results_041, dependson='dds_list', cache=TRUE}
+#HNRNPA logfc
+contr_11a_zone_sg1126_HNRNPA1kd <- lcdbwf:::make_results(
+  dds_name="zone_sg1126_HNRNPA1kd",
+  contrast=c('zone', 'N', 'S'),
+  lfcThreshold=0.5,
+  type='ashr',
+  label='zone ctrst with sg1126 for HNRNPA1kd lfc > 0.5'
+)
+```
+
+```{r results_042, dependson='dds_list', cache=TRUE}
+contr_11b_zone_sg1128_HNRNPA1kd <- lcdbwf:::make_results(
+  dds_name="zone_sg1128_HNRNPA1kd",
+  contrast=c('zone', 'N', 'S'),
+  lfcThreshold=0.5,
+  type='ashr',
+  label='zone ctrst with sg1128 for HNRNPA1kd lfc > 0.5'
+)
+```
+
+```{r results_051, dependson='dds_list', cache=TRUE}
+#FUS logfc
+contr_12a_zone_sg100_FUSkd <- lcdbwf:::make_results(
+  dds_name="zone_sg100_FUSkd",
+  contrast=c('zone', 'N', 'S'),
+  lfcThreshold=0.5,
+  type='ashr',
+  label='zone ctrst with sg100 for FUSkd lfc > 0.5'
+)
+```
+
+```{r results_052, dependson='dds_list', cache=TRUE}
+contr_12b_zone_sg1152_FUSkd <- lcdbwf:::make_results(
+  dds_name="zone_sg1152_FUSkd",
+  contrast=c('zone', 'N', 'S'),
+  lfcThreshold=0.5,
+  type='ashr',
+  label='zone ctrst with sg1152 for FUSkd lfc > 0.5'
+)
+```
+
+```{r results_061, dependson='dds_list', cache=TRUE}
+contr_13a_zone_sg100_TDP43kd <- lcdbwf:::make_results(
+  # TDP43kd logfc
+  dds_name="zone_sg100_TDP43kd",
+  contrast=c('zone', 'N', 'S'),
+  lfcThreshold=0.5,
+  type='ashr',
+  label='zone ctrst with sg100 for TDP43kd lfc > 0.5'
+)
+```
+
+```{r results_062, dependson='dds_list', cache=TRUE}
+contr_13b_zone_sg200_TDP43kd <- lcdbwf:::make_results(
+  dds_name="zone_sg200_TDP43kd",
+  contrast=c('zone', 'N', 'S'),
+  lfcThreshold=0.5,
+  type='ashr',
+  label='zone ctrst with sg200 for TDP43kd lfc > 0.5'
+)
+```
+
+```{r results_071, dependson='dds_list', cache=TRUE}
+contr_14a_interaction_HNRNPA1kd <- lcdbwf:::make_results(
+  dds_name="HNRNPA1kd_SN_sg1128_sg1126_interaction",
+  contrast=list('targetingtargeting.zoneN', 'targetingnontargeting.zoneN'),
+  lfcThreshold=0.5,
+  type='ashr',
+  label='targeting_zone_interaction for HNRNPA1kd lfc > 0.5'
+)
+```
+
+```{r results_072, dependson='dds_list', cache=TRUE}
+contr_14b_interaction_FUSkd <- lcdbwf:::make_results(
+  dds_name="FUSkd_SN_sg1152_sg100_interaction",
+  contrast=list('targetingtargeting.zoneN', 'targetingnontargeting.zoneN'),
+  lfcThreshold=0.5,
+  type='ashr',
+  label='targeting_zone_interaction for FUS lfc > 0.5'
+)
+```
+
+```{r results_073, dependson='dds_list', cache=TRUE}
+contr_14c_interaction_TDP43kd <- lcdbwf:::make_results(
+  dds_name="TDP43kd_SN_sg200_sg100_interaction",
+  contrast=list('targetingtargeting.zoneN', 'targetingnontargeting.zoneN'),
+  lfcThreshold=0.5,
+  type='ashr',
+  label='targeting_zone_interaction for TDP43 lfc > 0.5'
+)
+```
+
+```{r results_111, dependson='dds_list', cache=TRUE}
+contr_14d_interaction_HNRN_FUS <- lcdbwf:::make_results(
+  dds_name="HNRN_FUS_SN_sg1126_sg100_interaction",
+  contrast=list('targetingtargeting.zoneN', 'targetingnontargeting.zoneN'),
+  lfcThreshold=0.5,
+  type='ashr',
+  label='targeting_zone_interaction for HNRN & FUS lfc > 0.5'
+)
+```
+
+```{r results_112, dependson='dds_list', cache=TRUE}
+contr_14f_interaction_HNRN_FUS_TDP <- lcdbwf:::make_results(
+  dds_name="all_three_targets_SN_sg1126_sg100_interaction",
+  contrast=list('targetingtargeting.zoneN', 'targetingnontargeting.zoneN'),
+  lfcThreshold=0.5,
+  type='ashr',
+  label='targeting_zone_interaction for all three kds lfc > 0.5'
+)
+```
+
+```{r results_113, dependson='dds_list', cache=TRUE}
+contr_14g_interaction_no_WT_batch <- lcdbwf:::make_results(
+  dds_name="all_three_targets_batch_SN_sg1126_sg100_interaction",
+  contrast=list('targetingtargeting.zoneN', 'targetingnontargeting.zoneN'),
+  lfcThreshold=0.5,
+  type='ashr',
+  label='targeting_zone_interaction for all three kds with batch correction lfc > 0.5'
+)
+```
+
+```{r results_114, dependson='dds_list', cache=TRUE}
+contr_14h_no_WT_pair_zone <- lcdbwf:::make_results(
+  dds_name="three_targets_nested_non_interaction",
+  contrast=c("zone", 'N', 'S'),
+  lfcThreshold=0.5,
+  type='ashr',
+  label='zone ctrst for all three kds -- paired samples lfc > 0.5'
+)
+```
+
+```{r results_115, dependson='dds_list', cache=TRUE}
+contr_14i_no_WT_pair_targeting <- lcdbwf:::make_results(
+  dds_name="three_targets_nested_non_interaction",
+  contrast=c("targeting", 'targeting', 'nontargeting'),
+  lfcThreshold=0.5,
+  type='ashr',
+  label='targeting ctrst for all three kds -- paired samples lfc > 0.5'
+)
+```
+
+```{r results_116, dependson='dds_list', cache=TRUE}
+contr_14j_no_WT_pair_zone_batch_cor <- lcdbwf:::make_results(
+  dds_name="three_targets_nested_non_interaction_batch",
+  contrast=c("zone", 'N', 'S'),
+  lfcThreshold=0.5,
+  type='ashr',
+  label='zone ctrst for three kd--batch-corrected & paired samples lfc > 0.5'
+)
+```
+
+```{r results_117, dependson='dds_list', cache=TRUE}
+contr_14k_no_WT_pair_trgt_batch_cor <- lcdbwf:::make_results(
+  dds_name="three_targets_nested_non_interaction_batch",
+  contrast=c("targeting", 'targeting', 'nontargeting'),
+  lfcThreshold=0.5,
+  type='ashr',
+  label='trgeting ctrst for three kd--batch-corrected & paired samples lfc > 0.5'
+)
+```
+
+```{r results_081, dependson='dds_list', cache=TRUE}
+contr_15a_zone_in_trgt_HNRN_FUS <- lcdbwf:::make_results(
+  dds_name="zone_trgt_HNRN_FUS",
+  contrast=c('zone', 'N', 'S'),
+  lfcThreshold=0.5,
+  type='ashr',
+  label='zone ctrst in trgt for HNRN & FUSkd lfc > 0.5'
+  )
+```
+
+```{r results_082, dependson='dds_list', cache=TRUE}
+contr_15b_zone_in_ntrgt_HNRN_FUS <- lcdbwf:::make_results(
+  dds_name="zone_nontrgt_HNRN_FUS",
+  contrast=c('zone', 'N', 'S'),
+  lfcThreshold=0.5,
+  type='ashr',
+  label='zone ctrst in ntrgt for HNRN & FUSkd lfc > 0.5'
+)
+```
+
+```{r results_083, dependson='dds_list', cache=TRUE}
+contr_15c_zone_in_trgt_three <- lcdbwf:::make_results(
+  dds_name="zone_trgt_three",
+  contrast=c('zone', 'N', 'S'),
+  lfcThreshold=0.5,
+  type='ashr',
+  label='zone ctrst in trgt for all threekd lfc > 0.5'
+  )
+```  
+
+```{r results_084, dependson='dds_list', cache=TRUE}
+contr_15d_zone_in_ntrgt_three <- lcdbwf:::make_results(
+  dds_name="zone_ntrgt_three",
+  contrast=c('zone', 'N', 'S'),
+  lfcThreshold=0.5,
+  type='ashr',
+  label='zone ctrst in ntrgt for all threekd lfc > 0.5'
+  )
+```
+
+```{r results_091, dependson='dds_list', cache=TRUE}
+contr_16a_lfc05_trgt_ntrgt_N_HNRN_FUS <- lcdbwf:::make_results(
+  dds_name="targeting_nontargeting_HNRN_FUS_N",
+  lfcThreshold=0.5,
+  contrast=c("targeting", "targeting", "nontargeting"),
+  type="ashr",
+  label="trgtng vs ntrgtg ctrst in Neurite for HNRN & FUS lfc > 0.5"
+)
+```
+
+```{r results_092, dependson='dds_list', cache=TRUE}
+contr_16b_lfc05_trgt_ntrgt_S_HNRN_FUS <- lcdbwf:::make_results(
+  dds_name="targeting_nontargeting_HNRN_FUS_S",
+  lfcThreshold=0.5,
+  contrast=c("targeting", "targeting", "nontargeting"),
+  type="ashr",
+  label="trgtng vs ntrgtg ctrst in Soma for HNRN & FUS lfc > 0.5"
+  )
+```
+
+```{r results_093, dependson='dds_list', cache=TRUE}
+contr_16c_lfc05_trgt_ntrgt_N_three <- lcdbwf:::make_results(
+  dds_name="targeting_nontargeting_three_N",
+  lfcThreshold=0.5,
+  contrast=c("targeting", "targeting", "nontargeting"),
+  type="ashr",
+  label="trgtng vs ntrgtg ctrst in Neurite for all three kdslfc > 0.5"
+  )
+```
+
+```{r results_094, dependson='dds_list', cache=TRUE}
+contr_16d_lfc05_trgt_ntrgt_S_three <- lcdbwf:::make_results(
+  dds_name="targeting_nontargeting_three_S",
+  lfcThreshold=0.5,
+  contrast=c("targeting", "targeting", "nontargeting"),
+  type="ashr",
+  label="trgtng vs ntrgtg ctrst in Soma for all three kdslfc > 0.5"
+  )
+```
+
+```{r results_10, dependson='dds_list', cache=TRUE}
+contr_17_lfc05_zone_WT <- lcdbwf:::make_results(
+  dds_name="WT_N_vs_S",
+  contrast=c('zone', 'N', 'S'),
+  type="ashr",
+  label='zone ctrst for WT lfc > 0.5'
+  )
+```
+
+```{r results_13, dependson='dds_list', cache=TRUE}
+contr_18a_lfc05_trgt_ntrgt_N_three_batch <- lcdbwf:::make_results(
+  dds_name="targeting_nontargeting_three_N_batch",
+  contrast=c('targeting', 'targeting', 'nontargeting'),
+  type="ashr",
+  label='trgt vs ntrgt ctrst in Neurite for all three kd lfc > 0.5'
+  )
+```
+
+```{r results_131, dependson='dds_list', cache=TRUE}
+contr_18b_lfc05_trgt_ntrgt_S_three_batch <- lcdbwf:::make_results(
+  dds_name="targeting_nontargeting_three_S_batch",
+  contrast=c('targeting', 'targeting', 'nontargeting'),
+  type="ashr",
+  label='trgt vs ntrgt ctrst in Soma for all three kd lfc > 0.5'
+  )
+```
+
+```{r assemble_variables, cache=TRUE, config=config$annotation, dependson=knitr::all_labels()[grepl("^results_", knitr::all_labels())]}
+res_list <- lcdbwf:::collect_objects("^contr_[^_]+_")
+res_list <- lcdbwf:::attach_extra(res_list, config)
+```
+
+```{r summary, results='asis'}
+lcdbwf:::folded_markdown(text$results_table, "Help for table")
+lcdbwf:::summarize_res_list(res_list) %>% datatable
+```
+
+```{r MA_plots_nice}
+
+make_ma_plot <- function(res_name, extra_labels, ma_plot_data) {
+    contrast_name <- res_name
+    ma_plot_data[[res_name]]$res$SYMBOL_keep <- ifelse(!grepl("ENSG", ma_plot_data[[res_name]]$res$SYMBOL),ma_plot_data[[res_name]]$res$SYMBOL, "")
+
+    ggmaplot(ma_plot_data[[res_name]]$res,  main = contrast_name, 
+        fc=1.5, 
+        fdr=0.05, 
+        genenames=as.vector(ma_plot_data[[res_name]]$res$SYMBOL_keep), 
+    palette = c("#B31B21", "#1465AC", "darkgray"),
+    top = 20,
+    font.label = c("bold", 12), label.rectangle=TRUE,
+    font.legend = c(size=14, "bold"),
+    font.x = c(size=14, "bold"),
+    font.y = c(size=14, "bold"),
+    font.main = c(size = 20, "bold"),
+    font.tickslab = c(size=14),
+    ggtheme = ggplot2::theme_minimal(),
+    size=0.5,
+    label.select=extra_labels
+    )
+    ggsave(paste0("/data/CARD_ARDIS/2023_07_21_veronica_analysis/workflows/rnaseq/downstream/final_figures/MA_Plots/", contrast_name, ".pdf"))
+}
+# Modify the grep of these to select groups of interest
+tdp_list <- grep('TDP', names(res_list), value=T)
+hnrn_list <- grep('HNRNPA1kd$', names(res_list), value=T)
+fus_list <- grep('FUS', names(res_list), value=T)
+wt_list <- grep('WT', names(res_list), value=T)
+
+tdp_list %>% map(make_ma_plot, extra_labels=c('TARDBP', 'STMN2'), ma_plot_data=res_list)
+hnrn_list %>% map(make_ma_plot, extra_labels=c('HNRNPA1'), ma_plot_data=res_list)
+fus_list %>% map(make_ma_plot, extra_labels=c('FUS'), ma_plot_data=res_list)
+wt_list %>% map(make_ma_plot, extra_labels=c(), ma_plot_data=res_list)
+
+```
+
+```{r reportresults, results='asis', config=c(text$results_plots, config$toggle$results_diagnostics, config$plotting$diagnostics_results_names), dependson='assemble_variables', cache=TRUE}
+# Create nested tabs showing the results.
+# First level of tabs will be labels of results; second level will be different
+# output (MA plot, volcano plot, etc)
+lcdbwf:::build_results_tabs(res_list, dds_list, config, text)
+```
+
+```{r upsetplots, results='asis', eval=length(res_list)>1, config=config$annotation}
+# Compare overlap across multiple differential expression contrasts.
+lcdbwf:::mdcat(text$upset_plots)
+lcdbwf:::plot_upsets(res_list, label_column=config$annotation$label_column)
+```
+
+# Exported results
+
+```{r excel, results='asis'}
+lcdbwf:::exported_excel(res_list, dds_list, file='results/consolidated_results.xlsx')
+```
+
+Here is a single Excel file with one worksheet for each contrast: [results/consolidated_results.xlsx](results/consolidated_results.xlsx)
+
+Alternatively, the files below are TSVs that can be opened in Excel or used
+progammatically with downstream tools:
+
+```{r write_output, results='asis'}
+# Write out files for full and each selection, and create a link to them in the
+# HTML generated by this RMarkdown.
+tbl <- lcdbwf:::exported_tsvs(res_list)
+knitr::kable(tbl, row.names=FALSE)
+```
+
+```{r combined_rds, cache=TRUE, dependson='assemble_variables',cache.lazy=FALSE}
+obj <- lcdbwf:::compose_results(res_list, dds_list)
+saveRDS(obj, file='combined.Rds', compress=FALSE)
+```
+
+
+# Session info
+For reproducibility purposes, here is the output of `sessionInfo()` showing the
+versions of all packages used here.
+
+```{r sessioninfo}
+sessionInfo()
+```

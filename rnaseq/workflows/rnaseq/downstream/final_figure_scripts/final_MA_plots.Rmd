@@ -1,0 +1,153 @@
+---
+title: Final MA Plots
+output:
+    html_document:
+        code_folding: hide
+        toc: true
+        toc_float: true
+        toc_depth: 3
+params:
+    contrast_name: ''
+    targeting: ''
+    nontargeting: ''
+    base_folder: ''
+---
+
+```{r read_data}
+library(data.table)
+library(dplyr)
+library(ggpubr)
+library(ggrepel)
+
+file_list <- list.files(path = "results/", pattern = "\\.tsv$", full.names = TRUE)
+
+# Read each TSV file into a separate data.table and store them in a list
+data_tables_list <- lapply(file_list, fread)# Extract file names without the path and extension
+file_names <- basename(file_list)
+file_names <- sub("\\.tsv$", "", file_names)
+
+# Assign names to the list elements
+names(data_tables_list) <- file_names
+
+tdp_cryptics <- fread('tdp_43kd_cryptics.csv', select=c('gene_name'))
+hnrnpa_cryptics <- fread('hnrnpa1_cryptics.csv', select=c('gene_name'))
+
+```
+
+```{r MA function}
+make_ma_plot <- function(ma_plot_data, contrast_name) {
+    p <- ggmaplot(ma_plot_data,  main = contrast_name, 
+        fc=1.5, 
+        fdr=0.05, 
+        genenames=as.vector(ma_plot_data$SYMBOL),
+    palette = c("#B31B21", "#1465AC", "darkgray"),
+    top = 20,
+    font.label = c("bold", 12), label.rectangle=TRUE,
+    font.legend = c(size=14, "bold"),
+    font.x = c(size=14, "bold"),
+    font.y = c(size=14, "bold"),
+    font.main = c(size = 20, "bold"),
+    font.tickslab = c(size=14),
+    ggtheme = ggplot2::theme_minimal(),
+    size=0.5
+    )
+    ggsave(paste0("/data/CARD_ARDIS/2023_07_21_veronica_analysis/workflows/rnaseq/downstream/final_figures/MA_Plots/", contrast_name, ".pdf"))
+    return(p)
+}
+```
+
+```{r second_function}
+cryptic_ma_plot <- function(data, contrast_name, pos_color = "#E69F00", base_color = "grey", neg_color = "blue", third_color = "#56B4E9") {
+
+  log2FC_col <- 'log2FoldChange'
+  mean_expr_col <- 'baseMean'
+  fc_cutoff <- 1.5 #approx lg2foldchange cutoff of 0.5
+
+  subset_genes <- NULL
+  if(grepl("TDP", contrast_name)){
+    subset_genes <- c(subset_genes, tdp_cryptics$gene_name)
+  }
+
+  if(grepl("HNRNPA", contrast_name)){
+    subset_genes <- c(subset_genes, hnrnpa_cryptics$gene_name)
+  }
+  
+  # Initialize a color column
+  data$color <- base_color  # Default to negatively expressed genes
+  
+  # Assign colors based on expression
+  data <- data %>% mutate(color = ifelse(log2FoldChange > log2(fc_cutoff) & padj < 0.05, pos_color, color))
+  data <- data %>% mutate(color = ifelse(log2FoldChange < -log2(fc_cutoff) & padj < 0.05, neg_color, color))
+
+   
+   # Decide whether to show data
+   d <- data.table(data)
+   d$show <- NA
+   d$cryptic <- 0
+   d[head(order(padj), 20), 'show'] <- TRUE
+  
+  if (!is.null(subset_genes)) {
+    d[SYMBOL %in% subset_genes, `:=`(color = third_color, cryptic=1)]
+    d[SYMBOL %in% subset_genes &
+      (log2FoldChange > log2(fc_cutoff) |
+      log2FoldChange < -log2(fc_cutoff)) &
+      padj < 0.05,
+      `:=`(show = TRUE)
+      ]
+      print(nrow(d[cryptic==1]))
+  }
+  # Create the MA plot
+  p <- ggplot(d[cryptic==0], aes(x = log2(baseMean), y = log2FoldChange)) +
+    geom_point(aes(color = color), size = 1) +  # 'color' for non-cryptic genes
+    geom_point(data=d[cryptic==1], aes(color = color), size = 1) +  # Cryptic genes
+    scale_color_identity() +  # Use exact colors specified in the 'color' column
+    theme_minimal(12) +
+    theme(axis.text=element_text(size=10),
+                axis.title=element_text(size=12,face="bold"),
+                plot.title = element_text(size = 18, face = "bold")) +  # Apply ggpubr theme for publication-quality plots
+    labs(x = "Log2 mean expression", y = "Log2 fold change", title = "MA Plot") +
+    geom_hline(yintercept=c(0, -log2(fc_cutoff),log2(fc_cutoff)), linetype=c(1,2,2),
+                          color=c("black", "black", "black")) +
+    geom_label_repel(data=subset(d,show==TRUE), 
+                                aes(x=log2(baseMean), 
+                                y=log2FoldChange, 
+                                label=SYMBOL), min.segment.length=0,
+                                size=3,
+                                max.time = 2,
+                                force= 5,
+                                max.overlaps=40) +
+    ggtitle(contrast_name)
+
+    ggsave(paste0("/data/CARD_ARDIS/2023_07_21_veronica_analysis/workflows/rnaseq/downstream/final_figures/MA_Plots_cryptics/", contrast_name, ".pdf"),
+            p,
+            height=15,
+            width=15,
+            units='cm')
+}
+
+
+```
+
+```{r process_data_tables}
+library(ggpubr)
+mapply(make_ma_plot, data_tables_list, names(data_tables_list))
+
+sublist <- data_tables_list[grepl("lfc05.*HNRNPA|lfc05.*TDP43", names(data_tables_list))]
+mapply(cryptic_ma_plot, sublist, names(sublist))
+
+m <- data.table(mtcars)
+m$label <- NA
+m[head(order(m$mpg), 3), 'label'] <- TRUE
+
+ma_plot(h, 'TARDBP')
+
+ggplot(mtcars, aes=(x=mpg, y=wt)) +
+  geom_point() +
+  geom_label()
+
+my_func <- function(data){
+  my_sum <- data$SYMBOL %in% hnrnpa_cryptics$gene_name
+  return(sum(my_sum))
+}
+
+```

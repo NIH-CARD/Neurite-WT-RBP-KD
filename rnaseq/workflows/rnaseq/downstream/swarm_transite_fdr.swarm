@@ -1,0 +1,9 @@
+Rscript -e "rmarkdown::render('transcript_spma_fdr.Rmd', param=list(contrast_name='sg100_N_vs_sg100_S', neurite_contrast='sg100_N_TDP43kd', soma_contrast='sg100_S_TDP43kd'))"
+Rscript -e "rmarkdown::render('transcript_spma_fdr.Rmd', param=list(contrast_name='N_vs_S', neurite_contrast='WT_N', soma_contrast='WT_S'))"
+Rscript -e "rmarkdown::render('transcript_spma_fdr.Rmd', param=list(contrast_name='sg1152_FUSkd', neurite_contrast='sg1152_N_FUSkd', soma_contrast='sg1152_S_FUSkd'))"
+Rscript -e "rmarkdown::render('transcript_spma_fdr.Rmd', param=list(contrast_name='sg100_FUSkd', neurite_contrast='sg100_N_FUSkd', soma_contrast='sg100_S_FUSkd'))"
+Rscript -e "rmarkdown::render('transcript_spma_fdr.Rmd', param=list(contrast_name='sg100_TDP43kd', neurite_contrast='sg100_N_TDP43kd', soma_contrast='sg100_S_TDP43kd'))"
+Rscript -e "rmarkdown::render('transcript_spma_fdr.Rmd', param=list(contrast_name='sg200_TDP43kd', neurite_contrast='sg200_N_TDP43kd', soma_contrast='sg200_S_TDP43kd'))"
+Rscript -e "rmarkdown::render('transcript_spma_fdr.Rmd', param=list(contrast_name='sg1126_HNRNPA1kd', neurite_contrast='sg1126_N_HNRNPA1kd', soma_contrast='sg1126_S_HNRNPA1kd'))"
+Rscript -e "rmarkdown::render('transcript_spma_fdr.Rmd', param=list(contrast_name='sg1128_HNRNPA1kd', neurite_contrast='sg1128_N_HNRNPA1kd', soma_contrast='sg1128_S_HNRNPA1kd'))"
+
