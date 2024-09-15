@@ -1,4 +1,4 @@
----
+--
 title: Functional enrichment analysis
 output:
     html_document:
@@ -19,11 +19,7 @@ knitr::opts_chunk$set(
 ```{r}
 library(AnnotationHub)
 library(dplyr)
-library(data.table)
-library(viridis)
 library(BiocParallel)
-library(ggthemes)
-library(ggplot2)
 ```
 
 # Functional enrichment analysis
@@ -38,7 +34,7 @@ a particular annotation category.
 devtools::document('../../../lib/lcdbwf')
 devtools::load_all('../../../lib/lcdbwf')
 
-config <- lcdbwf:::load_config('config.yaml')
+config <- lcdbwf:::load_config('config_gsea.yaml')
 
 # set cores for operation
 if (config$parallel$parallel){
@@ -74,8 +70,18 @@ enrich_list <- lcdbwf:::run_enricher(res_list=res_list,
                                      config=config,
                                      cores=cores, sep='*')
 
+
 ```
 
+```{r combined_rds, cache=TRUE, dependson='enrich', cache.lazy=FALSE, eval=FALSE}
+
+obj <- lcdbwf:::compose_results(res_list=res_list,
+                                dds_list=dds_list,
+                                rld_list=rld_list,
+                                enrich_list=enrich_list)
+
+#saveRDS(obj, file='combined.Rds', compress=FALSE)
+```
 
 ```{r remove_homosapiens_useless_info}
 # This recursive function removes the useless Homo sapiens information. 
@@ -91,127 +97,14 @@ myrapply = function (x, myfun) {
 # Define the removeHomo function
 removeHomo <- function(x) {
   x@result$Description <- gsub(" - Homo sapiens \\(human\\)", "", x@result$Description)
-  x@result$Description <- gsub("^GOMF_", "", x@result$Description)
-  x@result$Description <- gsub("^GOBP_", "", x@result$Description)
-  x@result$Description <- gsub("^GOBP_", "", x@result$Description)
-  x@result$Description <- gsub("^GOCC_", "", x@result$Description)
+  x@result$Description <- gsub("^GOMF", "", x@result$Description)
+  x@result$Description <- gsub("^GOBP", "", x@result$Description)
+  x@result$Description <- gsub("^GOBP", "", x@result$Description)
+  x@result$Description <- gsub("^GOCC", "", x@result$Description)
   return(x)  # Make sure to return x
 }
 enrich_list <- myrapply(enrich_list, removeHomo)
 ```
-
-```{r coryplot}
-# This is for making plots based on count rather than gene ratio that show both up and down on the 
-# same scale
-#
-#' Truncate the names of an enrichment results object
-#'
-#' @param obj DOSE::enrichResult object
-#' @param truncate_to Max number of characters in a label
-#'
-#' @return enrichResult object with labels truncated
-truncate <- function(obj, truncate_to){
-  f <- function(x){
-    if (nchar(x) > truncate_to){
-      x <- paste0(substr(x, 1, truncate_to), '...')
-    }
-    return(x)
-  }
-  obj@result$Description <- sapply(obj@result$Description, f)
-  obj@result$Description <- make.unique(obj@result$Description)
-  return(obj)
-}
-#
-plot_GO <- function(upTable=NULL, downTable=NULL) {
-    if ((is.null(upTable) & is.null(downTable)) | (((length(downTable$ID)==0) & length(upTable$ID)==0))){
-        return(NULL)
-    }else{
-        upgenes <- NULL
-        downgenes <- NULL
-
-        truncate_len <- 200
-    
-        if(!is.null(upTable) & length(upTable$ID > 0)) { 
-                upTable <- truncate(upTable, truncate_len) 
-                upgenes<- as.data.table(upTable@result) }
-        if(!is.null(downTable) & length(downTable$ID >0)) {
-                downTable <- truncate(downTable, truncate_len)
-               downgenes <- as.data.table(downTable@result)
-    
-            # Invert Count for depleted genes
-            downgenes[, Count := -1*Count]
-        }
-        # Concatenate into one table
-        dat <- rbindlist(list(upgenes, downgenes))[qvalue <= 0.05]
-    
-        # Create qsort column to sort within 'counts' ties
-        dat[, 'qsort' := -1*qvalue]
-    
-        # Set order for plotting
-        setkey(dat, Count, qsort)
-        dat <- head(dat, 40)
-        GO_order <- dat$Description
-        dat[, Description := factor(Description, levels=unique(GO_order))]
-    
-        p<-   ggplot(dat, aes(x=Count, y=Description, fill=qvalue)) + geom_bar(stat='identity') +
-            theme_few() +
-            scale_fill_viridis(limits=c(0,0.05)) +
-            geom_vline(xintercept=0) 
-            #theme(plot.margin = margin(30, 30, 30, 30))
-        return(p)
-    }
-}
-
-
-path_initial <- "functional-enrichment_files/overrepresentation/cory_style"
-for(primary in names(enrich_list)){
-    a <- enrich_list[[primary]][['up']]
-    b <- enrich_list[[primary]][['down']]
-
-    for (ont in intersect(names(a), names(b))){
-        print(paste(primary, ont, sep='_'))
-        savename <- paste(primary, ont, "barplot_overrep", sep="_")
-        savename <- paste0(savename, ".pdf")
-        savename <- gsub(":", "—", savename)
-        ggplot2::ggsave(savename, plot=plot_GO(a[[ont]], b[[ont]]), path=path_initial, width=15, height=15)
-    }
-}
-
-```
-
-```{r output_cory_tsvs}
-tsv_list <- unlist(enrich_list)
-names(tsv_list) <- gsub(":", "-", names(tsv_list))
-names(tsv_list) <- gsub("\\.", "-", names(tsv_list))
-names(tsv_list) <- gsub("zone", "soma_vs_neurite", names(tsv_list))
-results <- map(tsv_list, ~slot(.x,'result'))
-result_paths <- stringr::str_glue("functional-enrichment_files/overrepresentation/tsvs/{names(results)}.tsv")
-walk2(results, result_paths, \(result, name) readr::write_tsv(result, name)) 
-
-contrasts_of_interest <- c('lfc05_trgt_ntrgt_N_FUSkd',
-  'lfc05_trgt_ntrgt_S_FUSkd',
-  'lfc05_trgt_ntrgt_N_HNRNPA1kd',
-  'lfc05_trgt_ntrgt_S_HNRNPA1kd',
-  'lfc05_trgt_ntrgt_N_TDP43kd',
-  'lfc05_trgt_ntrgt_S_TDP43kd',
-  'lfc05_trgt_ntrgt_S_TDP43kd',
-  'lfc05_zone_WT')
-directions <- c('up', 'down')
-onts <- c('C5_GO:BP', 'C5_GO:CC', 'C5_GO:MF', 'KEGG')
-
-init_path <- "functional-enrichment_files/overrepresentation/tsvs/cory_subset/"
-for(contrast in contrasts_of_interest){
-    for(direction in directions){
-        for(ont in onts){
-            ont_name <- gsub(":", "-", ont)
-            contrast_name <- gsub("zone", "soma_vs_neurite", contrast)
-            file_name <- paste0(init_path, contrast_name, '/', contrast_name, "_", direction, "-", ont_name, ".tsv")
-            try(readr::write_tsv(enrich_list[[contrast]][[direction]][[ont]]@result, file_name), silent=TRUE)
-        }
-    }
-}
-```
-
 
 ```{r functional_enrichment_plots}
 # Interestingly, it's the *caching* that causes this to hang for a loooong time.
@@ -220,7 +113,7 @@ emapplot_list <- lcdbwf:::enrich_list_lapply(enrich_list, emapplots, config=conf
 cnetplot_list <- lcdbwf:::enrich_list_lapply(enrich_list, cnetplots, config=config, send_names=TRUE)
 ```
 
-```{r, results='asis', eval=FALSE}
+```{r, results='asis'}
 lcdbwf:::mdcat("There are many different databases that annotate genes into sets.",
       "The following sets are used here:")
 
@@ -230,7 +123,7 @@ knitr::kable(config$functional_enrichment$ontologies %>% as.data.frame %>% t())
 # Plots {.tabset}
 
 ```{r, results='asis'}
-path_initial <- "functional-enrichment_files/overrepresentation"
+path_initial <- "functional-enrichment_files/gsea/"
 for (name in names(res_list)){
   mdcat("## ", name, "{.tabset}")
   for (direction in config$functional_enrichment$directions){
@@ -252,7 +145,7 @@ for (name in names(res_list)){
             lcdbwf:::mdcat("No dotplot figure available")
         }else{
             #print(dotplot_list[[name]][[direction]][[ont]])
-            savename <- paste(name, direction, ont, "dotplot_overrep", sep="_")
+            savename <- paste(name, direction, ont, "dotplot_gsea", sep="_")
             savename <- paste0(savename, ".pdf")
             savename <- gsub(":", "—", savename)
             ggplot2::ggsave(savename, plot=dotplot_list[[name]][[direction]][[ont]], path=path_initial)
@@ -284,16 +177,6 @@ for (name in names(res_list)){
 }
 
 
-```
-
-```{r combined_rds, cache=TRUE, dependson='enrich', cache.lazy=FALSE, eval=TRUE}
-
-obj <- lcdbwf:::compose_results(res_list=res_list,
-                                dds_list=dds_list,
-                                rld_list=rld_list,
-                                enrich_list=enrich_list)
-
-saveRDS(obj, file='combined_OR.Rds', compress=FALSE)
 ```
 
 # Session info
