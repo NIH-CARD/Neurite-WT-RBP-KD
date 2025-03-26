@@ -32,8 +32,7 @@ c = RNASeqConfig(config, config.get('patterns', 'config/rnaseq_patterns.yaml'))
 SAMPLES = c.sampletable.iloc[:, 0].values
 wildcard_constraints:
     n = '[1,2]',
-    sample = '|'.join(SAMPLES),
-    aspect="assembled|unassembled.forward|unassembled.reverse"
+    sample = '|'.join(SAMPLES)
 
 
 def wrapper_for(path):
@@ -329,12 +328,12 @@ if config['aligner']['index'].startswith('star'):
     # STAR can be run in 1-pass or 2-pass modes. Since we may be running it
     # more than once in almost the same way, we pull out the shell command here
     # and use it below.
-    # Lines deleted:     '--readFilesCommand zcat '
     STAR_CMD = (
         'STAR '
         '--runThreadN {threads} '
         '--genomeDir {genomedir} '
         '--readFilesIn {input.fastq} '
+        '--readFilesCommand zcat '
         '--outFileNamePrefix {prefix} '
         '{tmpdir_arg}'
 
@@ -361,21 +360,20 @@ if config['aligner']['index'] == 'star':
         Align with STAR (1-pass mode)
         """
         input:
-            fastq='data/rnaseq_samples/{sample}/{sample}.cutadapt.pear.{aspect}.fastq',
-            index=[c.refdict[c.organism][config['aligner']['tag']]['star']],
-            annotation=c.refdict[c.organism][config['gtf']['tag']]['annotation'],
+            fastq=common.fill_r1_r2(c.sampletable, c.patterns['fastq']),
+            annotation='/fdb/GENCODE/Gencode_human/release_45/gencode.v45.primary_assembly.annotation.gtf',
         output:
-            bam=temporary('data/rnaseq_samples/{sample}/{sample}.cutadapt.{aspect}'),
-            sjout=temporary(c.patterns['bam'].replace('.bam', '{aspect}.star.SJ.out.tab')),
+            bam=temporary(c.patterns['bam']),
+            sjout=temporary(c.patterns['bam'].replace('.bam', '.star.SJ.out.tab')),
         log:
-            c.patterns['bam'].replace('.bam', '{aspect}.star.bam.log')
+            c.patterns['bam'].replace('.bam', '.star.bam.log')
         threads: 16
         resources:
             mem_mb=gb(64),
             runtime=autobump(hours=8),
             disk_mb=gb(120)
         run:
-            genomedir = os.path.dirname(input.index[0])
+            genomedir = 'star_100_45_genome/'
             outdir = os.path.dirname(output[0])
             prefix = output.bam.replace('.bam', '.star.')
             shell(
@@ -398,15 +396,14 @@ if config['aligner']['index'] == 'star-twopass':
         First pass of alignment with STAR to get the junctions
         """
         input:
-            fastq='data/rnaseq_samples/{sample}/{sample}.cutadapt.pear.{aspect}.fastq',
+            fastq=common.fill_r1_r2(c.sampletable, c.patterns['cutadapt']),
             index=[c.refdict[c.organism][config['aligner']['tag']]['star']],
             annotation=c.refdict[c.organism][config['gtf']['tag']]['annotation'],
         output:
-            sjout=temporary(c.patterns['bam'].replace('.bam', '{aspect}.star-pass1.SJ.out.tab')),
+            sjout=temporary(c.patterns['bam'].replace('.bam', '.star-pass1.SJ.out.tab')),
         log:
-            c.patterns['bam'].replace('.bam', '{aspect}.star-pass1.bam.log')
+            c.patterns['bam'].replace('.bam', '.star-pass1.bam.log')
         threads: 16
-        group: "{aspect}"
         resources:
             mem_mb=gb(64),
             runtime=autobump(hours=8),
@@ -438,17 +435,16 @@ if config['aligner']['index'] == 'star-twopass':
         samples to get the final BAM
         """
         input:
-            sjout=expand(c.patterns['bam'].replace('.bam', '{aspect}.star-pass1.SJ.out.tab'), sample=SAMPLES),
-            fastq='data/rnaseq_samples/{sample}/{sample}.cutadapt.pear.{aspect}.fastq',
+            sjout=expand(c.patterns['bam'].replace('.bam', '.star-pass1.SJ.out.tab'), sample=SAMPLES),
+            fastq=common.fill_r1_r2(c.sampletable, c.patterns['cutadapt']),
             index=[c.refdict[c.organism][config['aligner']['tag']]['star']],
             annotation=c.refdict[c.organism][config['gtf']['tag']]['annotation'],
         output:
             bam=temporary(c.patterns['bam']),
-            sjout=temporary(c.patterns['bam'].replace('.bam', '{aspect}.star-pass2.SJ.out.tab')),
+            sjout=temporary(c.patterns['bam'].replace('.bam', '.star-pass2.SJ.out.tab')),
         log:
-            c.patterns['bam'].replace('.bam', '{aspect}.star-pass2.bam.log')
+            c.patterns['bam'].replace('.bam', '.star-pass2.bam.log')
         threads: 19
-        group: "{aspect}"
         resources:
             mem_mb=gb(140),
             runtime=autobump(hours=16),
@@ -469,7 +465,7 @@ if config['aligner']['index'] == 'star-twopass':
 
                     # Splice junction databases from all samples in the first
                     # pass.
-                    '--sjdbFileChrStartEnd {input.sjout} '
+                    '--sjdbFileChrStartEnd {input.sjout} '
                     '--outStd BAM_SortedByCoordinate > {output.bam} '
                     '2> {log} '
                 )
@@ -482,45 +478,13 @@ if config['aligner']['index'] == 'star-twopass':
 
             shell('rm -r {prefix}_STARgenome')
 
-rule combine_bams:
-    """
-    For combining the bams of star back into one after their various aspects
-    """
-    input: 'data/rnaseq_samples/{sample}/{sample}.cutadapt.{aspect}'
-    output: c.patterns['bam']
-    threads: 8
-    group: "summing"
-    shell: "samtools merge -@ 8 -f -o {output} {input}"
-
-
-rule pear:
-    """
-    MErge paired-end reads. This will help make the reads larger to pass through STAR
-    """
-    input: common.fill_r1_r2(c.sampletable, c.patterns['cutadapt'])
-    output:
-            merged='data/rnaseq_samples/{sample}/{sample}.cutadapt.pear.assembled.fastq',
-            forward='data/rnaseq_samples/{sample}/{sample}.cutadapt.pear.unassembled.forward.fastq',
-            reverse='data/rnaseq_samples/{sample}/{sample}.cutadapt.pear.unassembled.reverse.fastq',
-    log:
-        'data/rnaseq_samples/{sample}/{sample}.cutadapt.pear.assembled.fastq.log'
-    threads: 6
-    resources:
-        mem_mb=gb(2),
-        runtime=autobump(hours=2)
-    shell:
-        """
-        pear -f {input[0]} -r {input[1]} -o 'data/rnaseq_samples/{sample}/{sample}.cutadapt.pear' -j {threads}
-        """
-
-
 
 rule rRNA:
     """
     Map reads with bowtie2 to the rRNA reference
     """
     input:
-        fastq=r1_only(c.patterns['cutadapt']),
+        fastq=r1_only(c.patterns['fastq']),
         index=[c.refdict[c.organism][config['rrna']['tag']]['bowtie2']]
     output:
         bam=temporary(c.patterns['rrna']['bam'])
@@ -617,7 +581,7 @@ rule fastq_screen:
     """
     input:
         **fastq_screen_references(),
-        fastq=r1_only(rules.cutadapt.output.fastq),
+        fastq=r1_only(rules.cutadapt.input.fastq),
     output:
         txt=c.patterns['fastq_screen']
     log:
@@ -636,7 +600,7 @@ rule featurecounts:
     Count reads in annotations with featureCounts from the subread package
     """
     input:
-        annotation=c.refdict[c.organism][config['gtf']['tag']]['annotation'],
+        annotation='/fdb/GENCODE/Gencode_human/release_45/gencode.v45.primary_assembly.annotation.gtf',
         bam=c.targets['markduplicates']['bam']
     output:
         counts='{sample_dir}/rnaseq_aggregation/featurecounts.txt'
@@ -651,7 +615,7 @@ rule featurecounts:
         # NOTE: By default, we use -p for paired-end
         p_arg = ''
         if c.is_paired:
-            p_arg = '-p '
+            p_arg = '-p --countReadPairs'
 
         strand_arg = helpers.strand_arg_lookup(
             c, {
@@ -665,7 +629,10 @@ rule featurecounts:
             'featureCounts '
             '{strand_arg} '
             '{p_arg} '
+            '--ignoreDup '
             '-T {threads} '
+            '-t exon '
+            '-g gene_id '
             '--tmpDir $TMPDIR/ '
             '-a {input.annotation} '
             '-o {output.counts} '
@@ -773,13 +740,33 @@ rule multiqc:
             '&> {log} '
         )
 
+rule addGroup:
+ """
+ Not sure why this is necessary but Cory did it and it has a small effect on duplicates
+ """
+    input:
+        bam=c.patterns['bam']
+    output:
+        bam=c.patterns['bamrg']
+    run:
+        """
+        gatk AddOrReplaceReadGroups \
+            --INPUT {input.bam} \
+            --OUTPUT {output.bam} \
+            --RGID {wildcards.sample} \
+            --RGLB lib1 \
+            --RGPL ILLUMINA \
+            --RGPU unit1 \
+            --RGSM {wildcards.sanple}
+        """
+
 
 rule markduplicates:
     """
     Mark or remove PCR duplicates with Picard MarkDuplicates
     """
     input:
-        bam=c.patterns['bam']
+        bam=c.patterns['bamrg']
     output:
         bam=c.patterns['markduplicates']['bam'],
         metrics=c.patterns['markduplicates']['metrics']
@@ -803,7 +790,6 @@ rule markduplicates:
         'INPUT={input.bam} '
         'OUTPUT={output.bam} '
         'METRICS_FILE={output.metrics} '
-        'VALIDATION_STRINGENCY=LENIENT '
         '&> {log}'
 
 
@@ -964,7 +950,7 @@ rule kallisto:
 
 rule gtf_collapse:
     input:
-        annotation=c.refdict[c.organism][config['gtf']['tag']]['annotation']
+        annotation='/fdb/GENCODE/Gencode_human/release_45/gencode.v45.primary_assembly.annotation.gtf'
     output:
         gtf=temporary('collapsed_gtf.gtf')
     shell:
