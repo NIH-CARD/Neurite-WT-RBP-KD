@@ -7,7 +7,6 @@
 #SBATCH --gres=lscratch:400
 #SBATCH --partition quick,norm
 
-cd /data/CARD_ARDIS/users/wellerca/VR-boyden-kd
 REF='/fdb/STAR_current/GENCODE/Gencode_human/release_45/genes-100'
 REF=$(realpath $REF)
 ANNO=$(realpath gencode.v45.primary_assembly.annotation.gtf)

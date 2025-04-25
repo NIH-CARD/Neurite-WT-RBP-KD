@@ -7,6 +7,6 @@
 
 module load python/3
 
-cd /data/CARD_ARDIS/users/wellerca/VR-boyden-kd/APA/APA-Scan
+cd APA-Scan
 
 python ./APA-Scan.py
